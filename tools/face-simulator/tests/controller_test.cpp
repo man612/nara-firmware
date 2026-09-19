@@ -53,6 +53,21 @@ void TestBlinkEventuallyRuns() {
     assert(observed_closed);
 }
 
+void TestDeadlinesSurviveMillisWraparound() {
+    NaraFaceController face(6);
+    face.Reset(0xfffffff0u);
+
+    // Only 72 ms elapse across the wrap. A blink or idle-gaze deadline scheduled
+    // seconds ahead must not be treated as already expired before uint32 wraps.
+    face.Tick(0xfffffff8u);
+    face.Tick(0x00000038u);
+
+    assert(face.state().left_eye_open > 0.8f);
+    assert(face.state().right_eye_open > 0.8f);
+    assert(std::abs(face.state().gaze_x) < 0.05f);
+    assert(std::abs(face.state().gaze_y) < 0.05f);
+}
+
 void TestEmotionAndInteractionAreIndependent() {
     NaraFaceController face(5);
     face.SetInteraction(NaraInteractionState::Speaking);
@@ -70,6 +85,7 @@ int main() {
     TestSpeakingMouthTracksLevel();
     TestManualGazeClamps();
     TestBlinkEventuallyRuns();
+    TestDeadlinesSurviveMillisWraparound();
     TestEmotionAndInteractionAreIndependent();
 
     std::cout << "Nara face controller tests passed\n";
