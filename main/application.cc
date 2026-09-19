@@ -85,6 +85,9 @@ void Application::Initialize() {
     callbacks.on_vad_change = [this](bool speaking) {
         xEventGroupSetBits(event_group_, MAIN_EVENT_VAD_CHANGE);
     };
+    callbacks.on_output_level = [](float level) {
+        Board::GetInstance().GetDisplay()->SetSpeechLevel(level);
+    };
     callbacks.on_playback_drained = [this]() {
         xEventGroupSetBits(event_group_, MAIN_EVENT_PLAYBACK_DRAINED);
     };
@@ -1020,6 +1023,7 @@ void Application::HandleStateChangedEvent() {
                 display->ClearChatMessages();  // Clear messages first
                 display->SetEmotion(
                     "neutral");  // Then set emotion (wechat mode checks child count)
+                display->SetInteraction("idle");
             }
             audio_service_.EnableVoiceProcessing(false);
             audio_service_.EnableWakeWordDetection(true);
@@ -1027,11 +1031,13 @@ void Application::HandleStateChangedEvent() {
         case kDeviceStateConnecting:
             display->SetStatus(Lang::Strings::CONNECTING);
             display->SetEmotion("neutral");
+            display->SetInteraction("thinking");
             display->SetChatMessage("system", "");
             break;
         case kDeviceStateListening:
             display->SetStatus(Lang::Strings::LISTENING);
             display->SetEmotion("neutral");
+            display->SetInteraction("listening");
 
             // Make sure the audio processor is running
             if (play_popup_on_listening_ || !audio_service_.IsAudioProcessorRunning()) {
@@ -1050,6 +1056,7 @@ void Application::HandleStateChangedEvent() {
             break;
         case kDeviceStateSpeaking:
             display->SetStatus(Lang::Strings::SPEAKING);
+            display->SetInteraction("speaking");
 
             if (listening_mode_ != kListeningModeRealtime) {
                 audio_service_.EnableVoiceProcessing(false);
@@ -1060,15 +1067,27 @@ void Application::HandleStateChangedEvent() {
             break;
         case kDeviceStateNotifying:
             display->SetStatus(Lang::Strings::SPEAKING);
+            display->SetInteraction("speaking");
             audio_service_.EnableVoiceProcessing(false);
             audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
             break;
         case kDeviceStateWifiConfiguring:
+            display->SetInteraction("idle");
             audio_service_.EnableVoiceProcessing(false);
             audio_service_.EnableWakeWordDetection(false);
             break;
-        default:
-            // Do nothing
+        case kDeviceStateStarting:
+            display->SetInteraction("idle");
+            break;
+        case kDeviceStateUpgrading:
+        case kDeviceStateActivating:
+            display->SetInteraction("thinking");
+            break;
+        case kDeviceStateAudioTesting:
+            display->SetInteraction("listening");
+            break;
+        case kDeviceStateFatalError:
+            display->SetInteraction("error");
             break;
     }
 }

@@ -13,6 +13,7 @@ public:
     NaraFaceView& operator=(const NaraFaceView&) = delete;
 
     void Render(const NaraFaceState& state);
+    void SetVisible(bool visible);
 
 private:
     int width_;

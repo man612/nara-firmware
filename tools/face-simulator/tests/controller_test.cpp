@@ -23,7 +23,9 @@ void TestSpeakingMouthTracksLevel() {
 
     face.SetSpeechLevel(0.0f);
     face.Tick(200);
-    assert(face.state().mouth_open < 0.2f);
+    assert(face.state().mouth_open > 0.08f);
+    face.Tick(300);
+    assert(face.state().mouth_open < 0.1f);
 }
 
 void TestManualGazeClamps() {

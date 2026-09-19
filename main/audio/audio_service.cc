@@ -25,6 +25,29 @@
 
 #define TAG "AudioService"
 
+namespace {
+float EstimateSpeechLevel(const std::vector<int16_t>& pcm) {
+    if (pcm.empty()) {
+        return 0.0f;
+    }
+
+    uint64_t magnitude_sum = 0;
+    for (int16_t sample : pcm) {
+        const int32_t value = static_cast<int32_t>(sample);
+        magnitude_sum += static_cast<uint32_t>(value < 0 ? -value : value);
+    }
+
+    const float average =
+        static_cast<float>(magnitude_sum) / static_cast<float>(pcm.size());
+    constexpr float kNoiseFloor = 200.0f;
+    constexpr float kFullScaleSpeech = 7000.0f;
+
+    if (average <= kNoiseFloor) return 0.0f;
+    if (average >= kFullScaleSpeech) return 1.0f;
+    return (average - kNoiseFloor) / (kFullScaleSpeech - kNoiseFloor);
+}
+}  // namespace
+
 AudioService::AudioService() { event_group_ = xEventGroupCreate(); }
 
 AudioService::~AudioService() {
@@ -347,6 +370,9 @@ void AudioService::AudioOutputTask() {
         if (task.playback_id != 0 && callbacks_.on_playback_progress) {
             callbacks_.on_playback_progress(task.playback_id, task.media_position_ms);
         }
+        if (callbacks_.on_output_level) {
+            callbacks_.on_output_level(EstimateSpeechLevel(task.pcm));
+        }
 
         codec_->OutputData(task.pcm);
 
@@ -370,8 +396,13 @@ void AudioService::AudioOutputTask() {
         audio_queue_cv_.notify_all();
         lock.unlock();
 
-        if (notify_drained && callbacks_.on_playback_drained) {
-            callbacks_.on_playback_drained();
+        if (notify_drained) {
+            if (callbacks_.on_output_level) {
+                callbacks_.on_output_level(0.0f);
+            }
+            if (callbacks_.on_playback_drained) {
+                callbacks_.on_playback_drained();
+            }
         }
     }
 
