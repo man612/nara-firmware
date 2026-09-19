@@ -16,6 +16,8 @@ set(CONFIG_LV_USE_THORVG OFF CACHE BOOL "" FORCE)
 set(CONFIG_LV_USE_THORVG_INTERNAL OFF CACHE BOOL "" FORCE)
 set(LV_BUILD_INSTALL OFF CACHE BOOL "" FORCE)
 
+find_package(SDL2 REQUIRED)
+
 FetchContent_Declare(
   lvgl
   GIT_REPOSITORY https://github.com/lvgl/lvgl.git
@@ -38,7 +40,7 @@ target_include_directories(nara_face_view PUBLIC "${NARA_FACE_DIR}")
 target_link_libraries(nara_face_view PUBLIC nara_face_logic lvgl::lvgl)
 
 add_executable(nara-face-simulator main.cpp)
-target_link_libraries(nara-face-simulator PRIVATE nara_face_view lvgl::lvgl)
+target_link_libraries(nara-face-simulator PRIVATE nara_face_view lvgl::lvgl SDL2::SDL2)
 
 enable_testing()
 add_executable(nara-face-controller-test tests/controller_test.cpp)
