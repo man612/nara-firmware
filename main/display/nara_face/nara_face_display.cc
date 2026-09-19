@@ -167,6 +167,9 @@ void NaraFaceDisplay::SetInteraction(const char* interaction) {
     {
         std::lock_guard<std::mutex> lock(face_mutex_);
         controller_.SetInteraction(parsed);
+        if (parsed != NaraInteractionState::Speaking) {
+            controller_.SetSpeechLevel(0.0f);
+        }
     }
     ShowFace();
 }
