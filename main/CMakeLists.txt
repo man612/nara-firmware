@@ -423,6 +423,7 @@ elseif(CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85B)
     list(APPEND SOURCES
         "display/nara_face/nara_face_controller.cc"
         "display/nara_face/nara_face_view.cc"
+        "display/nara_face/nara_face_display.cc"
     )
     list(APPEND INCLUDE_DIRS "display/nara_face")
 elseif(CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85)
