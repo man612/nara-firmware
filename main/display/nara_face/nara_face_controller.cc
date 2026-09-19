@@ -177,8 +177,12 @@ void NaraFaceController::Tick(uint32_t now_ms) {
         target_mouth = 0.24f + state_.emotion_intensity * 0.18f;
     }
 
+    // Open quickly on speech energy but relax more slowly so 60 ms audio
+    // packets do not make the mouth look like a jittery level meter.
+    const float mouth_time_ms =
+        target_mouth > state_.mouth_open ? 45.0f : 120.0f;
     const float mouth_alpha =
-        std::min(1.0f, static_cast<float>(delta_ms) / 70.0f);
+        std::min(1.0f, static_cast<float>(delta_ms) / mouth_time_ms);
     state_.mouth_open = Approach(state_.mouth_open, target_mouth, mouth_alpha);
 
     const float breath_phase =
