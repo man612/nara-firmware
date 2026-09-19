@@ -417,6 +417,14 @@ elseif(CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85B)
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_16_4)
     set(BUILTIN_ICON_FONT font_material_symbols_16_4)
     set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
+    # Compile Nara's parametric face engine for the first physical target.
+    # The renderer is not wired into the board UI yet; compiling it here keeps
+    # the embedded and desktop implementations honest while integration lands.
+    list(APPEND SOURCES
+        "display/nara_face/nara_face_controller.cc"
+        "display/nara_face/nara_face_view.cc"
+    )
+    list(APPEND INCLUDE_DIRS "display/nara_face")
 elseif(CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85)
     set(BOARD_DIR "waveshare/esp32-s3-touch-lcd-1.85")
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_16_4)
