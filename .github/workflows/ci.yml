@@ -18,3 +18,35 @@ jobs:
         run: |
           python scripts/build.py --list-boards > boards.txt
           grep -F "waveshare/esp32-s3-touch-lcd-1.85b" boards.txt
+
+  waveshare-1-85b-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Compile Waveshare ESP32-S3-Touch-LCD-1.85B
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.0.2
+          target: esp32s3
+          path: .
+          command: >-
+            python scripts/build.py
+            waveshare/esp32-s3-touch-lcd-1.85b
+            --name esp32-s3-touch-lcd-1.85b
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nara-waveshare-1.85b-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            build/merged-binary.bin
+            build/**/*.bin
+            build/flasher_args.json
+            sdkconfig
+            dependencies.lock
