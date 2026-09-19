@@ -10,6 +10,6 @@ Parts of the initial embedded firmware foundation are derived from:
 
 The MIT license permits use, modification, redistribution and commercial use provided the copyright and permission notice remain with substantial portions of the software.
 
-Companion Firmware is maintained as an independent repository with its own product architecture, gateway configuration, documentation and development history. It is not endorsed by or affiliated with the upstream project.
+Nara Firmware is maintained as an independent repository with its own product architecture, gateway configuration, documentation and development history. It is not endorsed by or affiliated with the upstream project.
 
 Additional ESP-IDF components and board-support packages may carry their own licenses. Their package metadata and source notices remain authoritative.

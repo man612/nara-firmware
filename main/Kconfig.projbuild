@@ -1,21 +1,21 @@
-menu "Companion Firmware"
+menu "Nara Firmware"
 
 config OTA_URL
     string "Optional bootstrap / OTA URL"
     default ""
     help
         Optional compatibility endpoint used to discover server settings and firmware updates.
-        Leave empty when connecting directly to Companion Gateway.
+        Leave empty when connecting directly to Nara Gateway.
 
-config COMPANION_GATEWAY_URL
-    string "Default Companion Gateway WebSocket URL"
+config NARA_GATEWAY_URL
+    string "Default Nara Gateway WebSocket URL"
     default ""
     help
         Optional direct WebSocket gateway URL. This bypasses vendor bootstrap discovery.
         Runtime NVS setting websocket/url takes precedence.
 
-config COMPANION_GATEWAY_TOKEN
-    string "Default Companion Gateway Token"
+config NARA_GATEWAY_TOKEN
+    string "Default Nara Gateway Token"
     default ""
     help
         Optional bearer token for the direct gateway. Prefer runtime provisioning for secrets.

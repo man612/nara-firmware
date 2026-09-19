@@ -13,7 +13,7 @@ device
       |
       | authenticated WebSocket
       v
-Companion Gateway
+Nara Gateway
       |
       +-- voice runtime
       +-- brain
@@ -29,6 +29,6 @@ The ESP32 only needs a stable device protocol and audio stream.
 
 ## Direct connection
 
-Direct Companion Gateway WebSocket is the preferred path. A legacy OTA/bootstrap service is optional rather than mandatory.
+Direct Nara Gateway WebSocket is the preferred path. A legacy OTA/bootstrap service is optional rather than mandatory.
 
 Runtime provisioning should eventually own gateway URL, device token and certificate policy.

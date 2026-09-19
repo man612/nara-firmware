@@ -2,7 +2,7 @@
 
 ## Waveshare ESP32-S3-Touch-LCD-1.85B
 
-This is the first supported product target for Companion Firmware.
+This is the first supported product target for Nara Firmware.
 
 Expected capabilities used by the project:
 

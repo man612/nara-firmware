@@ -8,7 +8,7 @@ Build vendor-neutral firmware for physical AI companions. The firmware is a body
 
 - Never hard-code OpenAI, Gemini, DeepSeek, Hermes, SumoPod or another cloud as a required backend.
 - Never store third-party provider secrets in firmware.
-- Prefer direct authenticated communication with Companion Gateway.
+- Prefer direct authenticated communication with Nara Gateway.
 - Keep board-specific pins/drivers under board implementations.
 - Keep blink, gaze, idle animation, lip-sync envelope, touch and IMU reactions local.
 - Server commands should be semantic: `face.set`, `face.gaze`, `audio.interrupt`, `device.sleep`.
@@ -31,4 +31,4 @@ Host tests:
 
 ## Upstream lineage
 
-Some embedded foundation is derived from MIT-licensed XiaoZhi ESP32 code. Do not remove required copyright/license notices. New product behavior and branding belong to Companion Firmware.
+Some embedded foundation is derived from MIT-licensed XiaoZhi ESP32 code. Do not remove required copyright/license notices. New product behavior and branding belong to Nara Firmware.

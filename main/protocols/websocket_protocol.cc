@@ -81,10 +81,10 @@ bool WebsocketProtocol::OpenAudioChannel() {
     std::string url = settings.GetString("url");
     std::string token = settings.GetString("token");
     if (url.empty()) {
-        url = CONFIG_COMPANION_GATEWAY_URL;
+        url = CONFIG_NARA_GATEWAY_URL;
     }
     if (token.empty()) {
-        token = CONFIG_COMPANION_GATEWAY_TOKEN;
+        token = CONFIG_NARA_GATEWAY_TOKEN;
     }
     int version = settings.GetInt("version");
     if (version != 0) {
@@ -94,7 +94,7 @@ bool WebsocketProtocol::OpenAudioChannel() {
     error_occurred_ = false;
 
     if (url.empty()) {
-        ESP_LOGE(TAG, "Companion Gateway URL is not configured");
+        ESP_LOGE(TAG, "Nara Gateway URL is not configured");
         SetError(Lang::Strings::SERVER_NOT_CONNECTED, "gateway not configured");
         return false;
     }

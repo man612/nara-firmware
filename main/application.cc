@@ -544,7 +544,7 @@ void Application::InitializeProtocol() {
         protocol_ = std::make_unique<MqttProtocol>();
     } else {
         if (!ota_->HasWebsocketConfig()) {
-            ESP_LOGI(TAG, "Using direct Companion Gateway WebSocket configuration");
+            ESP_LOGI(TAG, "Using direct Nara Gateway WebSocket configuration");
         }
         protocol_ = std::make_unique<WebsocketProtocol>();
     }
