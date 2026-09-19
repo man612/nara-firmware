@@ -9,6 +9,12 @@ constexpr float kPi = 3.14159265358979323846f;
 float Approach(float current, float target, float alpha) {
     return current + (target - current) * NaraClamp01(alpha);
 }
+
+// Deadlines are always scheduled only a few seconds ahead, so signed-delta
+// comparison stays valid across the uint32 millisecond counter wraparound.
+bool TimeReached(uint32_t now_ms, uint32_t deadline_ms) {
+    return static_cast<int32_t>(now_ms - deadline_ms) >= 0;
+}
 }  // namespace
 
 NaraFaceController::NaraFaceController(uint32_t seed)
@@ -106,7 +112,7 @@ void NaraFaceController::UpdateGazeTarget(uint32_t now_ms) {
             gaze_target_y_ = 0.08f;
             break;
         case NaraInteractionState::Idle:
-            if (now_ms >= next_idle_gaze_ms_) {
+            if (TimeReached(now_ms, next_idle_gaze_ms_)) {
                 gaze_target_x_ = RandomRange(-0.58f, 0.58f);
                 gaze_target_y_ = RandomRange(-0.30f, 0.30f);
                 ScheduleIdleGaze(now_ms);
@@ -127,7 +133,7 @@ void NaraFaceController::Tick(uint32_t now_ms) {
     state_.gaze_y = Approach(state_.gaze_y, gaze_target_y_, gaze_alpha);
 
     const bool can_blink = state_.interaction != NaraInteractionState::Sleeping;
-    if (can_blink && !blink_active_ && now_ms >= next_blink_ms_) {
+    if (can_blink && !blink_active_ && TimeReached(now_ms, next_blink_ms_)) {
         blink_active_ = true;
         blink_started_ms_ = now_ms;
     }
