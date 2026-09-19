@@ -1,4 +1,5 @@
 #include "nara_face_display.h"
+#include "../lvgl_display/lvgl_theme.h"
 
 #include <cstring>
 #include <esp_random.h>
@@ -64,6 +65,13 @@ NaraFaceDisplay::~NaraFaceDisplay() {
 
 void NaraFaceDisplay::SetupUI() {
     LcdDisplay::SetupUI();
+
+    // The Nara face is intentionally white-on-black. Apply the existing dark
+    // LCD theme after the base widgets exist so status/network/battery text
+    // stays readable above the full-screen face layer.
+    if (auto* dark_theme = LvglThemeManager::GetInstance().GetTheme("dark")) {
+        LcdDisplay::SetTheme(dark_theme);
+    }
 
     DisplayLockGuard lock(this);
     if (!lock || emoji_box_ == nullptr) {
