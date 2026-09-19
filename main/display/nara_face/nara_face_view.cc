@@ -49,6 +49,10 @@ lv_obj_t* NaraFaceView::CreateShape(lv_obj_t* parent, uint32_t color) {
     return object;
 }
 
+void NaraFaceView::SetVisible(bool visible) {
+    SetHidden(root_, !visible);
+}
+
 void NaraFaceView::SetShape(
     lv_obj_t* object, int x, int y, int width, int height, int radius) {
     lv_obj_set_pos(object, x, y);
