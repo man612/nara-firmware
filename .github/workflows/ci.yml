@@ -19,6 +19,20 @@ jobs:
           python scripts/build.py --list-boards > boards.txt
           grep -F "waveshare/esp32-s3-touch-lcd-1.85b" boards.txt
 
+  face-simulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install desktop simulator dependencies
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev ninja-build
+      - name: Configure
+        run: cmake -S tools/face-simulator -B build/face-simulator -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build/face-simulator --parallel 2
+      - name: Test controller
+        run: ctest --test-dir build/face-simulator --output-on-failure
+
   waveshare-1-85b-build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
