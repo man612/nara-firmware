@@ -14,6 +14,7 @@
 #include "assets/lang_config.h"
 
 #include <esp_log.h>
+#include <algorithm>
 #include <optional>
 #include <memory>
 #include <esp_timer.h>
