@@ -466,7 +466,7 @@ bool Ota::Upgrade(const std::string& firmware_url,
         }
 
         if (!image_header_checked) {
-            image_header.append(buffer, buffer_offset);
+            image_header.append(buffer + read_offset, static_cast<size_t>(n));
             if (image_header.size() >= sizeof(esp_image_header_t) +
                                            sizeof(esp_image_segment_header_t) +
                                            sizeof(esp_app_desc_t)) {
