@@ -41,6 +41,7 @@ set(NARA_FACE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../main/display/nara_face")
 set(NARA_PHYSICAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../main/physical")
 set(NARA_VISION_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../main/vision")
 set(NARA_OFFLINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../main/offline")
+set(NARA_GAMES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../main/games")
 
 add_library(nara_face_logic
   "${NARA_FACE_DIR}/nara_face_controller.cc"
@@ -101,3 +102,10 @@ target_include_directories(
 )
 target_link_libraries(nara-offline-capsule-test PRIVATE cjson)
 add_test(NAME nara-offline-capsule COMMAND nara-offline-capsule-test)
+
+add_executable(nara-says-game-test
+  tests/nara_says_game_test.cpp
+  "${NARA_GAMES_DIR}/nara_says_game.cc"
+)
+target_include_directories(nara-says-game-test PRIVATE "${NARA_GAMES_DIR}")
+add_test(NAME nara-says-game COMMAND nara-says-game-test)
