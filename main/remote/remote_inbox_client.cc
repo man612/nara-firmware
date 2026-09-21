@@ -8,6 +8,7 @@
 #include <cJSON.h>
 #include <esp_log.h>
 
+#include <cstring>
 #include <memory>
 #include <string>
 
