@@ -6,6 +6,9 @@
 #include "config.h"
 #include "power_save_timer.h"
 #include "physical/gesture_classifier.h"
+#include "physical/touch_classifier.h"
+#include "offline/offline_utility_state.h"
+#include "offline/pcf85063_clock.h"
 #include "vision/sscma_i2c.h"
 #include "vision/vision_target_tracker.h"
 #include "settings.h"
@@ -17,9 +20,15 @@
 #include <algorithm>
 #include <optional>
 #include <memory>
+#include <ctime>
+#include <cstdio>
+#include <sys/time.h>
 #include <esp_timer.h>
 #include <driver/i2c_master.h>
 #include <driver/spi_master.h>
+#include <esp_lcd_panel_io.h>
+#include <esp_lcd_touch.h>
+#include <esp_lcd_touch_cst816s.h>
 #include <esp_lcd_st77916.h>
 #define TAG "waveshare_lcd_1_85b"
 
@@ -436,15 +445,26 @@ private:
     i2c_master_bus_handle_t i2c_bus_ = nullptr;
     i2c_master_dev_handle_t qmi8658_ = nullptr;
     i2c_master_dev_handle_t bq27220_ = nullptr;
+    esp_lcd_touch_handle_t touch_ = nullptr;
+    esp_lcd_panel_io_handle_t touch_io_ = nullptr;
+    std::unique_ptr<NaraPcf85063Clock> rtc_;
     Button boot_button_;
     Display* display_ = nullptr;
     PowerSaveTimer* power_save_timer_ = nullptr;
     NaraGestureClassifier gesture_classifier_;
+    NaraTouchClassifier touch_classifier_;
+    NaraOfflineUtilityState offline_utility_;
     std::unique_ptr<SscmaI2cVisionSensor> vision_sensor_;
     std::unique_ptr<NaraVisionTargetTracker> vision_tracker_;
     bool battery_saver_active_ = false;
     bool battery_critical_ = false;
+    bool touch_was_pressed_ = false;
+    bool offline_alert_active_ = false;
+    uint16_t last_touch_x_ = DISPLAY_WIDTH / 2;
+    uint16_t last_touch_y_ = DISPLAY_HEIGHT / 2;
     uint32_t last_battery_check_ms_ = 0;
+    uint32_t last_offline_poll_ms_ = 0;
+    uint32_t last_rtc_sync_ms_ = 0;
 
 
     bool AddI2cDevice(uint8_t address, i2c_master_dev_handle_t* handle) {
@@ -548,6 +568,232 @@ private:
         return true;
     }
 
+
+    void InitializeTouch() {
+        esp_lcd_panel_io_i2c_config_t io_config =
+            ESP_LCD_TOUCH_IO_I2C_CST816S_CONFIG();
+        io_config.scl_speed_hz = 400000;
+
+        esp_err_t err =
+            esp_lcd_new_panel_io_i2c(i2c_bus_, &io_config, &touch_io_);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "CST816S panel IO init failed: %s",
+                     esp_err_to_name(err));
+            touch_io_ = nullptr;
+            return;
+        }
+
+        const esp_lcd_touch_config_t touch_config = {
+            .x_max = DISPLAY_WIDTH,
+            .y_max = DISPLAY_HEIGHT,
+            .rst_gpio_num = TP_PIN_NUM_RST,
+            .int_gpio_num = TP_PIN_NUM_INT,
+            .levels = {
+                .reset = 0,
+                .interrupt = 0,
+            },
+            .flags = {
+                .swap_xy = DISPLAY_SWAP_XY,
+                .mirror_x = DISPLAY_MIRROR_X,
+                .mirror_y = DISPLAY_MIRROR_Y,
+            },
+        };
+
+        err = esp_lcd_touch_new_i2c_cst816s(
+            touch_io_, &touch_config, &touch_);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "CST816S touch init failed: %s",
+                     esp_err_to_name(err));
+            esp_lcd_panel_io_del(touch_io_);
+            touch_io_ = nullptr;
+            touch_ = nullptr;
+            return;
+        }
+
+        ESP_LOGI(TAG, "CST816S local touch input enabled");
+    }
+
+    void LoadOfflineUtilitySettings() {
+        Settings settings("offline", false);
+        offline_utility_.SetTimezoneOffsetMinutes(
+            settings.GetInt("tz_min", 0));
+        offline_utility_.SetTimerDueEpoch(
+            settings.GetInt("timer_due", 0));
+        if (settings.GetBool("alarm_on", false)) {
+            offline_utility_.SetDailyAlarm(
+                settings.GetInt("alarm_hour", 7),
+                settings.GetInt("alarm_min", 0));
+        } else {
+            offline_utility_.CancelAlarm();
+        }
+        offline_utility_.SetLastAlarmDay(
+            settings.GetInt("alarm_day", -1));
+    }
+
+    void InitializeRtcAndOfflineUtilities() {
+        LoadOfflineUtilitySettings();
+
+        rtc_ = std::make_unique<NaraPcf85063Clock>(i2c_bus_);
+        if (!rtc_->Probe()) {
+            rtc_.reset();
+            return;
+        }
+
+        std::time_t rtc_epoch = 0;
+        const std::time_t system_epoch = std::time(nullptr);
+        if (system_epoch < 1577836800 &&
+            rtc_->ReadEpoch(rtc_epoch)) {
+            timeval value = {
+                .tv_sec = rtc_epoch,
+                .tv_usec = 0,
+            };
+            if (settimeofday(&value, nullptr) == 0) {
+                ESP_LOGI(TAG, "System clock restored from PCF85063");
+            }
+        }
+    }
+
+    int64_t CurrentEpoch() const {
+        const std::time_t system_epoch = std::time(nullptr);
+        if (system_epoch >= 1577836800) {
+            return static_cast<int64_t>(system_epoch);
+        }
+
+        if (rtc_) {
+            std::time_t rtc_epoch = 0;
+            if (rtc_->ReadEpoch(rtc_epoch)) {
+                return static_cast<int64_t>(rtc_epoch);
+            }
+        }
+        return 0;
+    }
+
+    std::string FormatLocalTime(int64_t epoch) const {
+        if (epoch < 1577836800) {
+            return "Clock unavailable";
+        }
+        const std::time_t local_epoch = static_cast<std::time_t>(
+            epoch +
+            static_cast<int64_t>(
+                offline_utility_.timezone_offset_minutes()) * 60);
+        std::tm value{};
+        if (gmtime_r(&local_epoch, &value) == nullptr) {
+            return "Clock unavailable";
+        }
+        char buffer[48] = {};
+        std::snprintf(
+            buffer, sizeof(buffer),
+            "%02d:%02d  %02d/%02d/%04d",
+            value.tm_hour, value.tm_min,
+            value.tm_mday, value.tm_mon + 1,
+            value.tm_year + 1900);
+        return buffer;
+    }
+
+    void PersistTimerDue() {
+        Settings settings("offline", true);
+        settings.SetInt(
+            "timer_due",
+            static_cast<int32_t>(
+                std::min<int64_t>(
+                    offline_utility_.timer_due_epoch(),
+                    INT32_MAX)));
+    }
+
+    void StartLocalTimer(int seconds, bool notify = true) {
+        const int64_t now = CurrentEpoch();
+        if (now <= 0) {
+            if (notify) {
+                GetDisplay()->ShowNotification(
+                    "Clock unavailable; timer not started");
+            }
+            return;
+        }
+        offline_utility_.SetTimerDueEpoch(now + seconds);
+        PersistTimerDue();
+
+        if (notify) {
+            char message[48] = {};
+            const int minutes = seconds / 60;
+            const int remainder = seconds % 60;
+            std::snprintf(
+                message, sizeof(message),
+                "Timer %d:%02d started",
+                minutes, remainder);
+            GetDisplay()->ShowNotification(message);
+        }
+    }
+
+    void DismissOfflineAlert() {
+        if (!offline_alert_active_) {
+            return;
+        }
+        offline_alert_active_ = false;
+        Application::GetInstance().Schedule([]() {
+            Application::GetInstance().DismissAlert();
+        });
+    }
+
+    void FireOfflineAlert(const char* title, const char* message) {
+        offline_alert_active_ = true;
+        Application::GetInstance().Schedule(
+            [title = std::string(title),
+             message = std::string(message)]() {
+                Application::GetInstance().Alert(
+                    title.c_str(), message.c_str(),
+                    "surprised", Lang::Sounds::OGG_EXCLAMATION);
+            });
+    }
+
+    void ShowLocalClock() {
+        const int64_t now = CurrentEpoch();
+        const std::string clock = FormatLocalTime(now);
+        GetDisplay()->ShowNotification(clock, 4500);
+    }
+
+    void PollOfflineUtilities(uint32_t now_ms) {
+        if (last_offline_poll_ms_ != 0 &&
+            now_ms - last_offline_poll_ms_ < 500) {
+            return;
+        }
+        last_offline_poll_ms_ = now_ms;
+
+        const int64_t now = CurrentEpoch();
+        if (now <= 0) {
+            return;
+        }
+
+        const auto connectivity =
+            Application::GetInstance().GetConnectivityState();
+        if (rtc_ &&
+            connectivity == kConnectivityNetworkAvailable &&
+            (last_rtc_sync_ms_ == 0 ||
+             now_ms - last_rtc_sync_ms_ >= 60000)) {
+            last_rtc_sync_ms_ = now_ms;
+            std::time_t rtc_epoch = 0;
+            if (!rtc_->ReadEpoch(rtc_epoch) ||
+                std::llabs(
+                    static_cast<long long>(now) -
+                    static_cast<long long>(rtc_epoch)) > 2) {
+                rtc_->WriteEpoch(static_cast<std::time_t>(now));
+            }
+        }
+
+        const uint8_t events = offline_utility_.Poll(now);
+        if (events & kNaraOfflineEventTimer) {
+            PersistTimerDue();
+            FireOfflineAlert("Timer", "Time is up");
+        }
+        if (events & kNaraOfflineEventAlarm) {
+            Settings settings("offline", true);
+            settings.SetInt(
+                "alarm_day",
+                static_cast<int32_t>(
+                    offline_utility_.last_alarm_day()));
+            FireOfflineAlert("Alarm", "Alarm");
+        }
+    }
+
     const char* GestureKey(NaraMotionGesture gesture) const {
         switch (gesture) {
             case NaraMotionGesture::Flip:
@@ -568,6 +814,44 @@ private:
 
     std::string DefaultGestureSound(NaraMotionGesture gesture) const {
         return gesture == NaraMotionGesture::Shake
+                   ? "builtin:exclamation"
+                   : "builtin:popup";
+    }
+
+
+    const char* TouchGestureKey(NaraTouchGesture gesture) const {
+        switch (gesture) {
+            case NaraTouchGesture::Tap:
+                return "tap";
+            case NaraTouchGesture::DoubleTap:
+                return "double_tap";
+            case NaraTouchGesture::Hold:
+                return "hold";
+            case NaraTouchGesture::Stroke:
+                return "stroke";
+            case NaraTouchGesture::None:
+            default:
+                return "";
+        }
+    }
+
+    std::string DefaultTouchEmotion(NaraTouchGesture gesture) const {
+        switch (gesture) {
+            case NaraTouchGesture::Tap:
+            case NaraTouchGesture::Stroke:
+                return "happy";
+            case NaraTouchGesture::Hold:
+                return "shy";
+            case NaraTouchGesture::DoubleTap:
+                return "surprised";
+            case NaraTouchGesture::None:
+            default:
+                return "neutral";
+        }
+    }
+
+    std::string DefaultTouchSound(NaraTouchGesture gesture) const {
+        return gesture == NaraTouchGesture::DoubleTap
                    ? "builtin:exclamation"
                    : "builtin:popup";
     }
@@ -647,6 +931,119 @@ private:
         });
     }
 
+    void RunTouchReaction(
+        NaraTouchGesture gesture, bool require_idle = true) {
+        if (gesture == NaraTouchGesture::None) return;
+        auto& app = Application::GetInstance();
+        if (require_idle &&
+            app.GetDeviceState() != kDeviceStateIdle) {
+            return;
+        }
+
+        const std::string key = TouchGestureKey(gesture);
+        Settings reflex("reflex", false);
+        if (!reflex.GetBool((key + "_on").c_str(), true)) {
+            return;
+        }
+
+        const std::string emotion = reflex.GetString(
+            (key + "_emote").c_str(),
+            DefaultTouchEmotion(gesture));
+        const std::string sound = reflex.GetString(
+            (key + "_sound").c_str(),
+            DefaultTouchSound(gesture));
+
+        if (IsValidEmotion(emotion)) {
+            GetDisplay()->SetEmotion(emotion.c_str());
+        }
+        PlayReactionSound(sound);
+    }
+
+    void HandleTouchGesture(NaraTouchGesture gesture) {
+        if (gesture == NaraTouchGesture::None) {
+            return;
+        }
+
+        if (offline_alert_active_) {
+            DismissOfflineAlert();
+            return;
+        }
+
+        const auto connectivity =
+            Application::GetInstance().GetConnectivityState();
+        if (connectivity == kConnectivityNetworkUnavailable) {
+            if (gesture == NaraTouchGesture::Hold) {
+                ShowLocalClock();
+            } else if (gesture == NaraTouchGesture::DoubleTap) {
+                Settings settings("offline", false);
+                StartLocalTimer(
+                    settings.GetInt("quick_sec", 300), true);
+            }
+        }
+
+        Application::GetInstance().Schedule([this, gesture]() {
+            RunTouchReaction(gesture, true);
+        });
+    }
+
+    std::optional<NaraTouchGesture> ParseTouchGesture(
+        const std::string& value) const {
+        if (value == "tap") return NaraTouchGesture::Tap;
+        if (value == "double_tap") return NaraTouchGesture::DoubleTap;
+        if (value == "hold") return NaraTouchGesture::Hold;
+        if (value == "stroke" || value == "pet") {
+            return NaraTouchGesture::Stroke;
+        }
+        return std::nullopt;
+    }
+
+    void PollTouch(uint32_t now_ms) {
+        if (touch_ == nullptr) {
+            return;
+        }
+
+        bool pressed = false;
+        if (esp_lcd_touch_read_data(touch_) == ESP_OK) {
+            uint16_t x[1] = {last_touch_x_};
+            uint16_t y[1] = {last_touch_y_};
+            uint16_t strength[1] = {};
+            uint8_t points = 0;
+            pressed = esp_lcd_touch_get_coordinates(
+                touch_, x, y, strength, &points, 1);
+            if (pressed && points > 0) {
+                last_touch_x_ = x[0];
+                last_touch_y_ = y[0];
+            }
+        }
+
+        if (pressed) {
+            const float gaze_x =
+                ((static_cast<float>(last_touch_x_) /
+                  static_cast<float>(DISPLAY_WIDTH - 1)) *
+                     2.0f -
+                 1.0f) *
+                0.68f;
+            const float gaze_y =
+                ((static_cast<float>(last_touch_y_) /
+                  static_cast<float>(DISPLAY_HEIGHT - 1)) *
+                     2.0f -
+                 1.0f) *
+                0.42f;
+            GetDisplay()->SetGazeTarget(gaze_x, gaze_y);
+        } else if (touch_was_pressed_) {
+            GetDisplay()->ClearGazeTarget();
+        }
+        touch_was_pressed_ = pressed;
+
+        const auto gesture = touch_classifier_.Update({
+            .pressed = pressed,
+            .x = static_cast<float>(last_touch_x_),
+            .y = static_cast<float>(last_touch_y_),
+            .timestamp_ms = now_ms,
+        });
+        HandleTouchGesture(gesture);
+    }
+
     std::optional<NaraMotionGesture> ParseGesture(const std::string& value) const {
         if (value == "flip") return NaraMotionGesture::Flip;
         if (value == "shake") return NaraMotionGesture::Shake;
@@ -658,10 +1055,10 @@ private:
         McpServer::GetInstance().AddTool(
             "self.reflex.configure",
             "Configure a local physical reflex. Use only when the user explicitly asks to change "
-            "what Nara does when flipped, shaken, or spun. sound supports none, "
-            "builtin:popup, builtin:exclamation, or asset:<ogg asset name>.",
+            "what Nara does for flip, shake, spin, tap, double_tap, hold, or stroke/pet. "
+            "sound supports none, builtin:popup, builtin:exclamation, or asset:<ogg asset name>.",
             PropertyList({
-                Property("gesture", kPropertyTypeString).SetMaxLength(8),
+                Property("gesture", kPropertyTypeString).SetMaxLength(12),
                 Property("enabled", kPropertyTypeBoolean, true),
                 Property("emotion", kPropertyTypeString, std::string("")).SetMaxLength(16),
                 Property("sound", kPropertyTypeString, std::string("")).SetMaxLength(110),
@@ -670,8 +1067,10 @@ private:
             [this](const PropertyList& properties) -> ToolResult {
                 const auto gesture_name = properties["gesture"].value<std::string>();
                 const auto gesture = ParseGesture(gesture_name);
-                if (!gesture) {
-                    return std::unexpected("gesture must be flip, shake, or spin");
+                const auto touch_gesture = ParseTouchGesture(gesture_name);
+                if (!gesture && !touch_gesture) {
+                    return std::unexpected(
+                        "gesture must be flip, shake, spin, tap, double_tap, hold, stroke, or pet");
                 }
 
                 const auto emotion = properties["emotion"].value<std::string>();
@@ -686,7 +1085,9 @@ private:
                         "or an existing asset:<name>");
                 }
 
-                const std::string key = GestureKey(*gesture);
+                const std::string key = gesture
+                    ? GestureKey(*gesture)
+                    : TouchGestureKey(*touch_gesture);
                 Settings reflex("reflex", true);
                 reflex.SetBool((key + "_on").c_str(),
                                properties["enabled"].value<bool>());
@@ -698,11 +1099,93 @@ private:
                 }
 
                 if (properties["preview"].value<bool>()) {
-                    Application::GetInstance().Schedule([this, gesture = *gesture]() {
-                        RunGestureReaction(gesture, false);
-                    });
+                    if (gesture) {
+                        Application::GetInstance().Schedule(
+                            [this, gesture = *gesture]() {
+                                RunGestureReaction(gesture, false);
+                            });
+                    } else {
+                        Application::GetInstance().Schedule(
+                            [this, gesture = *touch_gesture]() {
+                                RunTouchReaction(gesture, false);
+                            });
+                    }
                 }
                 return true;
+            });
+    }
+
+
+    void InitializeOfflineTools() {
+        McpServer::GetInstance().AddTool(
+            "self.offline.utility",
+            "Configure local clock utilities that keep working without Internet. "
+            "action is timer, cancel_timer, alarm, cancel_alarm, timezone, status, or show_time.",
+            PropertyList({
+                Property("action", kPropertyTypeString).SetMaxLength(16),
+                Property("seconds", kPropertyTypeInteger, 300, 1, 86400),
+                Property("hour", kPropertyTypeInteger, 7, 0, 23),
+                Property("minute", kPropertyTypeInteger, 0, 0, 59),
+                Property("timezone_offset_minutes",
+                         kPropertyTypeInteger, 0, -720, 840),
+            }),
+            [this](const PropertyList& properties) -> ToolResult {
+                const std::string action =
+                    properties["action"].value<std::string>();
+                const int64_t now = CurrentEpoch();
+
+                if (action == "timer") {
+                    if (now <= 0) {
+                        return std::unexpected(
+                            "clock unavailable; cannot start a persistent timer");
+                    }
+                    StartLocalTimer(
+                        properties["seconds"].value<int>(), true);
+                } else if (action == "cancel_timer") {
+                    offline_utility_.CancelTimer();
+                    PersistTimerDue();
+                } else if (action == "alarm") {
+                    offline_utility_.SetDailyAlarm(
+                        properties["hour"].value<int>(),
+                        properties["minute"].value<int>());
+                    Settings settings("offline", true);
+                    settings.SetBool("alarm_on", true);
+                    settings.SetInt(
+                        "alarm_hour",
+                        offline_utility_.alarm_hour());
+                    settings.SetInt(
+                        "alarm_min",
+                        offline_utility_.alarm_minute());
+                } else if (action == "cancel_alarm") {
+                    offline_utility_.CancelAlarm();
+                    Settings settings("offline", true);
+                    settings.SetBool("alarm_on", false);
+                } else if (action == "timezone") {
+                    offline_utility_.SetTimezoneOffsetMinutes(
+                        properties["timezone_offset_minutes"].value<int>());
+                    Settings settings("offline", true);
+                    settings.SetInt(
+                        "tz_min",
+                        offline_utility_.timezone_offset_minutes());
+                } else if (action == "show_time") {
+                    ShowLocalClock();
+                } else if (action != "status") {
+                    return std::unexpected(
+                        "unknown offline utility action");
+                }
+
+                char status[192] = {};
+                std::snprintf(
+                    status, sizeof(status),
+                    "time=%s; timer_due=%lld; alarm=%s %02d:%02d; timezone_offset_minutes=%d",
+                    FormatLocalTime(CurrentEpoch()).c_str(),
+                    static_cast<long long>(
+                        offline_utility_.timer_due_epoch()),
+                    offline_utility_.alarm_enabled() ? "on" : "off",
+                    offline_utility_.alarm_hour(),
+                    offline_utility_.alarm_minute(),
+                    offline_utility_.timezone_offset_minutes());
+                return std::string(status);
             });
     }
 
@@ -871,10 +1354,13 @@ private:
                     if (self->qmi8658_ != nullptr) {
                         NaraMotionSample sample;
                         if (self->ReadMotionSample(sample)) {
-                            self->HandleMotionGesture(self->gesture_classifier_.Update(sample));
+                            self->HandleMotionGesture(
+                                self->gesture_classifier_.Update(sample));
                         }
                     }
+                    self->PollTouch(now_ms);
                     self->PollBatteryPolicy(now_ms);
+                    self->PollOfflineUtilities(now_ms);
                     vTaskDelay(pdMS_TO_TICKS(20));
                 }
             },
@@ -1066,11 +1552,14 @@ public:
         InitializeCodecI2c();
         InitializePhysicalSensors();
         InitializeBatteryGauge();
+        InitializeRtcAndOfflineUtilities();
         st77916_reset();
         InitializeSpi();
         Initializest77916Display();
+        InitializeTouch();
         InitializeButtons();
         InitializeReactionTools();
+        InitializeOfflineTools();
         GetBacklight()->RestoreBrightness();
         InitializeOptionalVision();
         StartPhysicalReflexTask();
