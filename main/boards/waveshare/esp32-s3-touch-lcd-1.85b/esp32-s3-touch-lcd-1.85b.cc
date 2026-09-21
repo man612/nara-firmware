@@ -5,8 +5,11 @@
 #include "button.h"
 #include "config.h"
 #include "power_save_timer.h"
+#include "physical/gesture_classifier.h"
+#include "settings.h"
 
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <driver/i2c_master.h>
 #include <driver/spi_master.h>
 #include <esp_lcd_st77916.h>
@@ -422,10 +425,236 @@ static const st77916_lcd_init_cmd_t vendor_specific_init_version_2[] = {
 
 class WaveshareEsp32s3TouchLcd1_85B : public WifiBoard {
 private:
-    i2c_master_bus_handle_t i2c_bus_;
+    i2c_master_bus_handle_t i2c_bus_ = nullptr;
+    i2c_master_dev_handle_t qmi8658_ = nullptr;
+    i2c_master_dev_handle_t bq27220_ = nullptr;
     Button boot_button_;
-    Display* display_;
-    PowerSaveTimer* power_save_timer_;
+    Display* display_ = nullptr;
+    PowerSaveTimer* power_save_timer_ = nullptr;
+    NaraGestureClassifier gesture_classifier_;
+    bool battery_saver_active_ = false;
+    bool battery_critical_ = false;
+    uint32_t last_battery_check_ms_ = 0;
+
+
+    bool AddI2cDevice(uint8_t address, i2c_master_dev_handle_t* handle) {
+        i2c_device_config_t config = {
+            .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+            .device_address = address,
+            .scl_speed_hz = 400000,
+            .scl_wait_us = 0,
+            .flags = {},
+        };
+        esp_err_t err = i2c_master_bus_add_device(i2c_bus_, &config, handle);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "I2C device 0x%02x unavailable: %s", address, esp_err_to_name(err));
+            *handle = nullptr;
+            return false;
+        }
+        return true;
+    }
+
+    bool WriteRegister(i2c_master_dev_handle_t device, uint8_t reg, uint8_t value) {
+        if (device == nullptr) return false;
+        const uint8_t data[] = {reg, value};
+        return i2c_master_transmit(device, data, sizeof(data), 100) == ESP_OK;
+    }
+
+    bool ReadRegisters(i2c_master_dev_handle_t device, uint8_t reg, uint8_t* data, size_t length) {
+        if (device == nullptr) return false;
+        return i2c_master_transmit_receive(device, &reg, 1, data, length, 100) == ESP_OK;
+    }
+
+    bool ReadWord(i2c_master_dev_handle_t device, uint8_t reg, uint16_t& value) {
+        uint8_t data[2] = {};
+        if (!ReadRegisters(device, reg, data, sizeof(data))) return false;
+        value = static_cast<uint16_t>(data[0]) |
+                (static_cast<uint16_t>(data[1]) << 8);
+        return true;
+    }
+
+    void InitializePhysicalSensors() {
+        if (!AddI2cDevice(0x6B, &qmi8658_)) {
+            return;
+        }
+
+        uint8_t who_am_i = 0;
+        if (!ReadRegisters(qmi8658_, 0x00, &who_am_i, 1) || who_am_i != 0x05) {
+            ESP_LOGW(TAG, "QMI8658 not detected (WHO_AM_I=0x%02x)", who_am_i);
+            i2c_master_bus_rm_device(qmi8658_);
+            qmi8658_ = nullptr;
+            return;
+        }
+
+        // Nara-owned conservative profile: address auto-increment, +/-8g accel
+        // at 125Hz, +/-512dps gyro at ~117Hz, both sensors enabled.
+        // Gesture thresholds remain provisional until physical enclosure/HIL calibration.
+        WriteRegister(qmi8658_, 0x60, 0xB0);
+        vTaskDelay(pdMS_TO_TICKS(20));
+        const bool configured =
+            WriteRegister(qmi8658_, 0x02, 0x40) &&
+            WriteRegister(qmi8658_, 0x03, 0x26) &&
+            WriteRegister(qmi8658_, 0x04, 0x56) &&
+            WriteRegister(qmi8658_, 0x08, 0x03);
+        if (!configured) {
+            ESP_LOGW(TAG, "Failed to configure QMI8658");
+            i2c_master_bus_rm_device(qmi8658_);
+            qmi8658_ = nullptr;
+            return;
+        }
+        ESP_LOGI(TAG, "QMI8658 motion reflex input enabled");
+    }
+
+    void InitializeBatteryGauge() {
+        if (AddI2cDevice(0x55, &bq27220_)) {
+            uint16_t soc = 0;
+            if (ReadWord(bq27220_, 0x2C, soc) && soc <= 100) {
+                ESP_LOGI(TAG, "BQ27220 battery gauge enabled, SOC=%u%%", soc);
+                return;
+            }
+            ESP_LOGW(TAG, "BQ27220 did not return a valid SOC yet");
+        }
+    }
+
+    bool ReadMotionSample(NaraMotionSample& sample) {
+        uint8_t raw[12] = {};
+        if (!ReadRegisters(qmi8658_, 0x35, raw, sizeof(raw))) return false;
+
+        auto s16 = [&raw](size_t offset) -> int16_t {
+            return static_cast<int16_t>(
+                static_cast<uint16_t>(raw[offset]) |
+                (static_cast<uint16_t>(raw[offset + 1]) << 8));
+        };
+
+        constexpr float kAccelCountsPerG = 4096.0f;  // +/-8g
+        constexpr float kGyroCountsPerDps = 64.0f;  // +/-512dps
+        sample.ax_g = static_cast<float>(s16(0)) / kAccelCountsPerG;
+        sample.ay_g = static_cast<float>(s16(2)) / kAccelCountsPerG;
+        sample.az_g = static_cast<float>(s16(4)) / kAccelCountsPerG;
+        sample.gx_dps = static_cast<float>(s16(6)) / kGyroCountsPerDps;
+        sample.gy_dps = static_cast<float>(s16(8)) / kGyroCountsPerDps;
+        sample.gz_dps = static_cast<float>(s16(10)) / kGyroCountsPerDps;
+        sample.timestamp_ms = static_cast<uint32_t>(esp_timer_get_time() / 1000ULL);
+        return true;
+    }
+
+    void HandleMotionGesture(NaraMotionGesture gesture) {
+        if (gesture == NaraMotionGesture::None) return;
+
+        Application::GetInstance().Schedule([this, gesture]() {
+            auto& app = Application::GetInstance();
+            if (app.GetDeviceState() != kDeviceStateIdle) {
+                return;
+            }
+
+            Settings reflex("reflex", false);
+            const char* key = gesture == NaraMotionGesture::Flip
+                                  ? "flip"
+                                  : gesture == NaraMotionGesture::Shake ? "shake" : "spin";
+            const std::string reaction = reflex.GetString(
+                key,
+                gesture == NaraMotionGesture::Shake ? "annoyed" : "surprised");
+
+            if (reaction == "off" || reaction == "silent") return;
+
+            auto* display = GetDisplay();
+            if (reaction == "happy") {
+                display->SetEmotion("happy");
+            } else if (reaction == "annoyed") {
+                display->SetEmotion("annoyed");
+            } else {
+                display->SetEmotion("surprised");
+            }
+
+            // Built-in local feedback costs no network/AI tokens. A later
+            // reaction-pack layer will resolve arbitrary user sound IDs
+            // (including a custom meow) from flash/microSD.
+            app.PlaySound(reaction == "annoyed" ? Lang::Sounds::OGG_EXCLAMATION
+                                                 : Lang::Sounds::OGG_POPUP);
+        });
+    }
+
+    void ApplyBatteryPolicy(int level, bool charging) {
+        Settings settings("power", false);
+        if (!settings.GetBool("auto_battery_saver", true)) return;
+
+        const int eco_percent = settings.GetInt("eco_percent", 20);
+        const int critical_percent = settings.GetInt("critical_percent", 10);
+        const int recover_percent = settings.GetInt("recover_percent", 25);
+
+        if (charging || level >= recover_percent) {
+            if (battery_saver_active_) {
+                battery_saver_active_ = false;
+                battery_critical_ = false;
+                ESP_LOGI(TAG, "Battery saver released at %d%%", level);
+                Application::GetInstance().Schedule([this]() {
+                    GetBacklight()->RestoreBrightness();
+                    GetDisplay()->SetPowerSaveMode(false);
+                });
+            }
+            return;
+        }
+
+        if (level <= critical_percent) {
+            if (!battery_critical_) {
+                battery_critical_ = true;
+                battery_saver_active_ = true;
+                ESP_LOGW(TAG, "Critical battery: %d%%", level);
+                WifiBoard::SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+                Application::GetInstance().Schedule([this]() {
+                    GetBacklight()->SetBrightness(8);
+                    GetDisplay()->SetEmotion("sad");
+                });
+            }
+            return;
+        }
+
+        if (level <= eco_percent && !battery_saver_active_) {
+            battery_saver_active_ = true;
+            ESP_LOGI(TAG, "Automatic battery saver enabled at %d%%", level);
+            WifiBoard::SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+            Application::GetInstance().Schedule([this]() {
+                if (GetBacklight()->brightness() > 25) {
+                    GetBacklight()->SetBrightness(25);
+                }
+            });
+        }
+    }
+
+    void PollBatteryPolicy(uint32_t now_ms) {
+        if (bq27220_ == nullptr ||
+            (last_battery_check_ms_ != 0 && now_ms - last_battery_check_ms_ < 30000)) {
+            return;
+        }
+        last_battery_check_ms_ = now_ms;
+
+        int level = 0;
+        bool charging = false;
+        bool discharging = false;
+        if (GetBatteryLevel(level, charging, discharging)) {
+            ApplyBatteryPolicy(level, charging);
+        }
+    }
+
+    void StartPhysicalReflexTask() {
+        xTaskCreate(
+            [](void* arg) {
+                auto* self = static_cast<WaveshareEsp32s3TouchLcd1_85B*>(arg);
+                while (true) {
+                    const uint32_t now_ms =
+                        static_cast<uint32_t>(esp_timer_get_time() / 1000ULL);
+                    if (self->qmi8658_ != nullptr) {
+                        NaraMotionSample sample;
+                        if (self->ReadMotionSample(sample)) {
+                            self->HandleMotionGesture(self->gesture_classifier_.Update(sample));
+                        }
+                    }
+                    self->PollBatteryPolicy(now_ms);
+                    vTaskDelay(pdMS_TO_TICKS(20));
+                }
+            },
+            "nara_reflex", 4096, this, 2, nullptr);
+    }
 
     static void st77916_reset(void)
     {
@@ -610,11 +839,14 @@ public:
     WaveshareEsp32s3TouchLcd1_85B() : boot_button_(BOOT_BUTTON_GPIO, false, 3000) {
         InitializePowerSaveTimer();
         InitializeCodecI2c();
+        InitializePhysicalSensors();
+        InitializeBatteryGauge();
         st77916_reset();
         InitializeSpi();
         Initializest77916Display();
         InitializeButtons();
         GetBacklight()->RestoreBrightness();
+        StartPhysicalReflexTask();
     }
 
     virtual AudioCodec* GetAudioCodec() override {
@@ -641,6 +873,23 @@ public:
     virtual Backlight* GetBacklight() override {
         static PwmBacklight backlight(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT);
         return &backlight;
+    }
+
+    virtual bool GetBatteryLevel(int& level, bool& charging, bool& discharging) override {
+        uint16_t soc = 0;
+        uint16_t raw_current = 0;
+        if (bq27220_ == nullptr ||
+            !ReadWord(bq27220_, 0x2C, soc) ||
+            !ReadWord(bq27220_, 0x0C, raw_current) ||
+            soc > 100) {
+            return false;
+        }
+
+        const int16_t current_ma = static_cast<int16_t>(raw_current);
+        level = static_cast<int>(soc);
+        charging = current_ma < -5;
+        discharging = current_ma > 5;
+        return true;
     }
 
     virtual void SetPowerSaveLevel(PowerSaveLevel level) override {
