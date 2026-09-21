@@ -122,6 +122,7 @@ public:
     void SetAecMode(AecMode mode);
     AecMode GetAecMode() const { return aec_mode_; }
     void PlaySound(const std::string_view& sound);
+    bool PlayAssetSound(const std::string& asset_name);
     AudioService& GetAudioService() { return audio_service_; }
     
     /**

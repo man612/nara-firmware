@@ -7,9 +7,12 @@
 #include "power_save_timer.h"
 #include "physical/gesture_classifier.h"
 #include "settings.h"
+#include "assets.h"
+#include "mcp_server.h"
 #include "assets/lang_config.h"
 
 #include <esp_log.h>
+#include <optional>
 #include <esp_timer.h>
 #include <driver/i2c_master.h>
 #include <driver/spi_master.h>
@@ -539,40 +542,162 @@ private:
         return true;
     }
 
+    const char* GestureKey(NaraMotionGesture gesture) const {
+        switch (gesture) {
+            case NaraMotionGesture::Flip:
+                return "flip";
+            case NaraMotionGesture::Shake:
+                return "shake";
+            case NaraMotionGesture::Spin:
+                return "spin";
+            case NaraMotionGesture::None:
+            default:
+                return "";
+        }
+    }
+
+    std::string DefaultGestureEmotion(NaraMotionGesture gesture) const {
+        return gesture == NaraMotionGesture::Shake ? "annoyed" : "surprised";
+    }
+
+    std::string DefaultGestureSound(NaraMotionGesture gesture) const {
+        return gesture == NaraMotionGesture::Shake
+                   ? "builtin:exclamation"
+                   : "builtin:popup";
+    }
+
+    bool IsValidEmotion(const std::string& emotion) const {
+        return emotion == "neutral" || emotion == "happy" || emotion == "shy" ||
+               emotion == "sad" || emotion == "annoyed" || emotion == "surprised";
+    }
+
+    bool IsValidSoundSpec(const std::string& sound) const {
+        if (sound == "none" || sound == "builtin:popup" ||
+            sound == "builtin:exclamation") {
+            return true;
+        }
+        if (sound.rfind("asset:", 0) != 0) {
+            return false;
+        }
+        const std::string asset = sound.substr(6);
+        if (asset.empty() || asset.size() > 96 || asset.find("..") != std::string::npos ||
+            asset.front() == '/' || asset.front() == '\\') {
+            return false;
+        }
+        void* data = nullptr;
+        size_t size = 0;
+        return Assets::GetInstance().GetAssetData(asset, data, size) &&
+               data != nullptr && size > 0;
+    }
+
+    void PlayReactionSound(const std::string& sound) {
+        auto& app = Application::GetInstance();
+        if (sound == "none") {
+            return;
+        }
+        if (sound == "builtin:exclamation") {
+            app.PlaySound(Lang::Sounds::OGG_EXCLAMATION);
+            return;
+        }
+        if (sound == "builtin:popup") {
+            app.PlaySound(Lang::Sounds::OGG_POPUP);
+            return;
+        }
+        if (sound.rfind("asset:", 0) == 0) {
+            if (!app.PlayAssetSound(sound.substr(6))) {
+                ESP_LOGW(TAG, "Reaction asset failed at playback: %s", sound.c_str());
+            }
+        }
+    }
+
+    void RunGestureReaction(NaraMotionGesture gesture, bool require_idle = true) {
+        if (gesture == NaraMotionGesture::None) return;
+        auto& app = Application::GetInstance();
+        if (require_idle && app.GetDeviceState() != kDeviceStateIdle) {
+            return;
+        }
+
+        const std::string key = GestureKey(gesture);
+        Settings reflex("reflex", false);
+        if (!reflex.GetBool((key + "_on").c_str(), true)) {
+            return;
+        }
+
+        const std::string emotion = reflex.GetString(
+            (key + "_emote").c_str(), DefaultGestureEmotion(gesture));
+        const std::string sound = reflex.GetString(
+            (key + "_sound").c_str(), DefaultGestureSound(gesture));
+
+        if (IsValidEmotion(emotion)) {
+            GetDisplay()->SetEmotion(emotion.c_str());
+        }
+        PlayReactionSound(sound);
+    }
+
     void HandleMotionGesture(NaraMotionGesture gesture) {
         if (gesture == NaraMotionGesture::None) return;
-
         Application::GetInstance().Schedule([this, gesture]() {
-            auto& app = Application::GetInstance();
-            if (app.GetDeviceState() != kDeviceStateIdle) {
-                return;
-            }
-
-            Settings reflex("reflex", false);
-            const char* key = gesture == NaraMotionGesture::Flip
-                                  ? "flip"
-                                  : gesture == NaraMotionGesture::Shake ? "shake" : "spin";
-            const std::string reaction = reflex.GetString(
-                key,
-                gesture == NaraMotionGesture::Shake ? "annoyed" : "surprised");
-
-            if (reaction == "off" || reaction == "silent") return;
-
-            auto* display = GetDisplay();
-            if (reaction == "happy") {
-                display->SetEmotion("happy");
-            } else if (reaction == "annoyed") {
-                display->SetEmotion("annoyed");
-            } else {
-                display->SetEmotion("surprised");
-            }
-
-            // Built-in local feedback costs no network/AI tokens. A later
-            // reaction-pack layer will resolve arbitrary user sound IDs
-            // (including a custom meow) from flash/microSD.
-            app.PlaySound(reaction == "annoyed" ? Lang::Sounds::OGG_EXCLAMATION
-                                                 : Lang::Sounds::OGG_POPUP);
+            RunGestureReaction(gesture, true);
         });
+    }
+
+    std::optional<NaraMotionGesture> ParseGesture(const std::string& value) const {
+        if (value == "flip") return NaraMotionGesture::Flip;
+        if (value == "shake") return NaraMotionGesture::Shake;
+        if (value == "spin") return NaraMotionGesture::Spin;
+        return std::nullopt;
+    }
+
+    void InitializeReactionTools() {
+        McpServer::GetInstance().AddTool(
+            "self.reflex.configure",
+            "Configure a local physical reflex. Use only when the user explicitly asks to change "
+            "what Nara does when flipped, shaken, or spun. sound supports none, "
+            "builtin:popup, builtin:exclamation, or asset:<ogg asset name>.",
+            PropertyList({
+                Property("gesture", kPropertyTypeString).SetMaxLength(8),
+                Property("enabled", kPropertyTypeBoolean, true),
+                Property("emotion", kPropertyTypeString, std::string("")).SetMaxLength(16),
+                Property("sound", kPropertyTypeString, std::string("")).SetMaxLength(110),
+                Property("preview", kPropertyTypeBoolean, false),
+            }),
+            [this](const PropertyList& properties) -> ToolResult {
+                const auto gesture_name = properties["gesture"].value<std::string>();
+                const auto gesture = ParseGesture(gesture_name);
+                if (!gesture) {
+                    return std::unexpected("gesture must be flip, shake, or spin");
+                }
+
+                const auto emotion = properties["emotion"].value<std::string>();
+                const auto sound = properties["sound"].value<std::string>();
+                if (!emotion.empty() && !IsValidEmotion(emotion)) {
+                    return std::unexpected(
+                        "emotion must be neutral, happy, shy, sad, annoyed, or surprised");
+                }
+                if (!sound.empty() && !IsValidSoundSpec(sound)) {
+                    return std::unexpected(
+                        "sound must be none, builtin:popup, builtin:exclamation, "
+                        "or an existing asset:<name>");
+                }
+
+                const std::string key = GestureKey(*gesture);
+                Settings reflex("reflex", true);
+                reflex.SetBool((key + "_on").c_str(),
+                               properties["enabled"].value<bool>());
+                if (!emotion.empty()) {
+                    reflex.SetString((key + "_emote").c_str(), emotion);
+                }
+                if (!sound.empty()) {
+                    reflex.SetString((key + "_sound").c_str(), sound);
+                }
+
+                if (properties["preview"].value<bool>()) {
+                    Application::GetInstance().Schedule([this, gesture = *gesture]() {
+                        RunGestureReaction(gesture, false);
+                    });
+                }
+                return true;
+            });
     }
 
     void ApplyBatteryPolicy(int level, bool charging) {
@@ -846,6 +971,7 @@ public:
         InitializeSpi();
         Initializest77916Display();
         InitializeButtons();
+        InitializeReactionTools();
         GetBacklight()->RestoreBrightness();
         StartPhysicalReflexTask();
     }
