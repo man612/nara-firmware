@@ -782,11 +782,12 @@ private:
 
         NaraVisionTrackerConfig config;
         config.frame_width =
-            static_cast<float>(std::max(1, vision.GetInt("frame_w", 240)));
+            static_cast<float>(std::max<int32_t>(1, vision.GetInt("frame_w", 240)));
         config.frame_height =
-            static_cast<float>(std::max(1, vision.GetInt("frame_h", 240)));
+            static_cast<float>(std::max<int32_t>(1, vision.GetInt("frame_h", 240)));
         config.min_score =
-            static_cast<float>(std::max(0, std::min(100, vision.GetInt("min_score", 60))));
+            static_cast<float>(std::max<int32_t>(
+            0, std::min<int32_t>(100, vision.GetInt("min_score", 60))));
         config.smoothing = 0.30f;
         config.deadband = 0.04f;
         config.hold_ms = 900;
