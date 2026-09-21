@@ -1,0 +1,75 @@
+name: firmware-release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  waveshare-1-85b-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Resolve release metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if [[ -z "$version" ]]; then
+            echo "Release version is empty" >&2
+            exit 1
+          fi
+          if [[ "$version" == *-* ]]; then
+            channel="beta"
+            prerelease="true"
+          else
+            channel="stable"
+            prerelease="false"
+          fi
+          echo "NARA_PROJECT_VER=$version" >> "$GITHUB_ENV"
+          echo "NARA_RELEASE_CHANNEL=$channel" >> "$GITHUB_ENV"
+          echo "NARA_PRERELEASE=$prerelease" >> "$GITHUB_ENV"
+
+      - name: Compile Waveshare ESP32-S3-Touch-LCD-1.85B
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v6.0.2
+          target: esp32s3
+          path: .
+          command: >-
+            python scripts/build.py
+            waveshare/esp32-s3-touch-lcd-1.85b
+            --name esp32-s3-touch-lcd-1.85b
+
+      - name: Package OTA release
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          test -f build/nara_firmware.bin
+          cp build/nara_firmware.bin release/nara-waveshare-1.85b.ota.bin
+          cp build/merged-binary.bin release/nara-waveshare-1.85b.factory.bin
+          python scripts/generate_ota_manifest.py             --version "$NARA_PROJECT_VER"             --channel "$NARA_RELEASE_CHANNEL"             --board "esp32-s3-touch-lcd-1.85b"             --binary release/nara-waveshare-1.85b.ota.bin             --base-url "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"             --output release/nara-waveshare-1.85b.manifest.json
+          sha256sum             release/nara-waveshare-1.85b.ota.bin             release/nara-waveshare-1.85b.factory.bin             > release/SHA256SUMS
+
+      - name: Publish GitHub release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(--repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes)
+          if [[ "$NARA_PRERELEASE" == "true" ]]; then
+            args+=(--prerelease)
+          fi
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" "${args[@]}"
+          fi
+          gh release upload "$GITHUB_REF_NAME"             release/nara-waveshare-1.85b.ota.bin             release/nara-waveshare-1.85b.factory.bin             release/nara-waveshare-1.85b.manifest.json             release/SHA256SUMS             --clobber             --repo "$GITHUB_REPOSITORY"
