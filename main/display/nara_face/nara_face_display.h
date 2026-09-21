@@ -8,6 +8,7 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <qrcode.h>
 
 class NaraFaceDisplay : public SpiLcdDisplay {
 public:
@@ -40,7 +41,7 @@ private:
     std::vector<uint16_t> qr_buffer_;
     std::mutex qr_mutex_;
 
-    void RenderQrCode(void* handle);
+    void RenderQrCode(esp_qrcode_handle_t handle);
     void RenderFace(uint32_t now_ms);
     void ShowFace();
     void ShowLegacyEmotion(const char* emotion);
