@@ -10,6 +10,8 @@
 #include "offline/offline_utility_state.h"
 #include "offline/offline_capsule.h"
 #include "offline/pcf85063_clock.h"
+#include "games/nara_says_game.h"
+#include "diagnostics/network_probe.h"
 #include "vision/sscma_i2c.h"
 #include "vision/vision_target_tracker.h"
 #include "settings.h"
