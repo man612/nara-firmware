@@ -9,5 +9,9 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # "Trim" the build. Include the minimal set of components, main, and anything it depends on.
 idf_build_set_property(MINIMAL_BUILD ON)
 
-set(PROJECT_VER "0.1.0")
+if(DEFINED ENV{NARA_PROJECT_VER} AND NOT "$ENV{NARA_PROJECT_VER}" STREQUAL "")
+    set(PROJECT_VER "$ENV{NARA_PROJECT_VER}")
+else()
+    set(PROJECT_VER "0.1.0")
+endif()
 project(nara_firmware)
