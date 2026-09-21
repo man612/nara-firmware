@@ -6,13 +6,17 @@
 #include "config.h"
 #include "power_save_timer.h"
 #include "physical/gesture_classifier.h"
+#include "vision/sscma_i2c.h"
+#include "vision/vision_target_tracker.h"
 #include "settings.h"
 #include "assets.h"
 #include "mcp_server.h"
 #include "assets/lang_config.h"
 
 #include <esp_log.h>
+#include <algorithm>
 #include <optional>
+#include <memory>
 #include <esp_timer.h>
 #include <driver/i2c_master.h>
 #include <driver/spi_master.h>
@@ -436,6 +440,8 @@ private:
     Display* display_ = nullptr;
     PowerSaveTimer* power_save_timer_ = nullptr;
     NaraGestureClassifier gesture_classifier_;
+    std::unique_ptr<SscmaI2cVisionSensor> vision_sensor_;
+    std::unique_ptr<NaraVisionTargetTracker> vision_tracker_;
     bool battery_saver_active_ = false;
     bool battery_critical_ = false;
     uint32_t last_battery_check_ms_ = 0;
@@ -762,6 +768,99 @@ private:
         }
     }
 
+    void InitializeOptionalVision() {
+        Settings vision("vision", false);
+        if (!vision.GetBool("enabled", true)) {
+            ESP_LOGI(TAG, "External local vision disabled by settings");
+            return;
+        }
+
+        auto sensor = std::make_unique<SscmaI2cVisionSensor>(i2c_bus_);
+        if (!sensor->Probe()) {
+            return;
+        }
+
+        NaraVisionTrackerConfig config;
+        config.frame_width =
+            static_cast<float>(std::max<int32_t>(1, vision.GetInt("frame_w", 240)));
+        config.frame_height =
+            static_cast<float>(std::max<int32_t>(1, vision.GetInt("frame_h", 240)));
+        config.min_score =
+            static_cast<float>(std::max<int32_t>(
+            0, std::min<int32_t>(100, vision.GetInt("min_score", 60))));
+        config.smoothing = 0.30f;
+        config.deadband = 0.04f;
+        config.hold_ms = 900;
+
+        vision_tracker_ = std::make_unique<NaraVisionTargetTracker>(config);
+        vision_sensor_ = std::move(sensor);
+
+        xTaskCreate(
+            [](void* arg) {
+                auto* self = static_cast<WaveshareEsp32s3TouchLcd1_85B*>(arg);
+                std::vector<NaraVisionBox> boxes;
+                bool gaze_active = false;
+
+                while (self->vision_sensor_ != nullptr &&
+                       self->vision_tracker_ != nullptr) {
+                    const uint32_t now_ms =
+                        static_cast<uint32_t>(esp_timer_get_time() / 1000ULL);
+
+                    if (self->vision_sensor_->Invoke(boxes, 1200)) {
+                        const NaraVisionBox* best = nullptr;
+                        for (const auto& box : boxes) {
+                            if (best == nullptr || box.score > best->score) {
+                                best = &box;
+                            }
+                        }
+
+                        if (best != nullptr) {
+                            const auto gaze =
+                                self->vision_tracker_->Update(*best, now_ms);
+                            if (gaze) {
+                                gaze_active = true;
+                                Application::GetInstance().Schedule(
+                                    [display = self->GetDisplay(),
+                                     x = gaze->x,
+                                     y = gaze->y]() {
+                                        display->SetGazeTarget(x, y);
+                                    });
+                            }
+                        } else if (!self->vision_tracker_->Tick(now_ms)) {
+                            if (gaze_active) {
+                                gaze_active = false;
+                                Application::GetInstance().Schedule(
+                                    [display = self->GetDisplay()]() {
+                                        display->ClearGazeTarget();
+                                    });
+                            }
+                        }
+                    } else if (!self->vision_tracker_->Tick(now_ms)) {
+                        if (gaze_active) {
+                            gaze_active = false;
+                            Application::GetInstance().Schedule(
+                                [display = self->GetDisplay()]() {
+                                    display->ClearGazeTarget();
+                                });
+                        }
+                    }
+
+                    // The external module performs inference. Nara only follows
+                    // compact detection coordinates, so no camera frames or AI
+                    // tokens are spent on idle eye tracking.
+                    vTaskDelay(pdMS_TO_TICKS(80));
+                }
+                vTaskDelete(nullptr);
+            },
+            "nara_vision", 6144, this, 2, nullptr);
+
+        ESP_LOGI(TAG,
+                 "Local SSCMA vision gaze enabled (%dx%d, min score %d)",
+                 static_cast<int>(config.frame_width),
+                 static_cast<int>(config.frame_height),
+                 static_cast<int>(config.min_score));
+    }
+
     void StartPhysicalReflexTask() {
         xTaskCreate(
             [](void* arg) {
@@ -973,6 +1072,7 @@ public:
         InitializeButtons();
         InitializeReactionTools();
         GetBacklight()->RestoreBrightness();
+        InitializeOptionalVision();
         StartPhysicalReflexTask();
     }
 
