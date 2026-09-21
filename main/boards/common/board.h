@@ -21,7 +21,8 @@ enum class NetworkEvent {
     Scanning,              // Network is scanning (WiFi scanning, etc.)
     Connecting,            // Network is connecting (data: SSID/network name)
     Connected,             // Network connected successfully (data: SSID/network name)
-    Disconnected,          // Network disconnected
+    Disconnected,          // A previously connected network was lost
+    Unavailable,           // Initial connection window expired; station keeps retrying in background
     WifiConfigModeEnter,   // Entered WiFi configuration mode
     WifiConfigModeExit,    // Exited WiFi configuration mode
     // Cellular modem specific events
