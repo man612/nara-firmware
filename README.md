@@ -64,6 +64,30 @@ The firmware already has two OTA application slots and application rollback enab
 
 The server runtime lives in `man612/nara`. It can route voice, reasoning, memory, search, and tools to different providers without reflashing the device.
 
+## Current Waveshare 1.85B status
+
+The first target now compiles in full ESP-IDF CI with the Nara-specific device behavior enabled.
+
+Implemented software includes:
+
+- Nara parametric face with local blink/gaze/idle motion and speaker-audio mouth activity;
+- saved-Wi-Fi retry/recovery and useful local idle when known networks are temporarily unavailable;
+- deliberate BOOT long-press entry into Wi-Fi recovery/configuration;
+- QMI8658 motion sampling and deterministic flip/shake/spin reaction foundation;
+- persistent local gesture reactions with configurable emotion/sound;
+- custom Ogg reaction sounds from the separate assets partition;
+- user/admin-only complete asset-pack installation over HTTPS;
+- BQ27220 battery-level reading and automatic low/critical battery behavior;
+- authenticated firmware gateway credentials and OTA image integrity checks;
+- optional SSCMA-compatible external local vision over I2C: compact local detection boxes can drive Nara's gaze without uploading ordinary tracking frames to an LLM.
+
+CI validates compilation, host logic and protocol behavior. It does not replace physical calibration of microphone/AEC, speaker acoustics, touch orientation, IMU thresholds, battery behavior, TWS/browser behavior or an optional external camera.
+
+See the board-local docs:
+
+- `main/boards/waveshare/esp32-s3-touch-lcd-1.85b/REACTION_ASSETS.md`
+- `main/boards/waveshare/esp32-s3-touch-lcd-1.85b/VISION.md`
+
 ## Development without hardware
 
 Most protocol, state-machine, and UI work can happen before purchasing the board. Real hardware is still required to validate audio quality, AEC, touch calibration, IMU orientation, battery behavior, and sustained ESP32 performance.
