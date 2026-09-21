@@ -29,6 +29,7 @@ FetchContent_MakeAvailable(lvgl)
 set(NARA_FACE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../main/display/nara_face")
 set(NARA_PHYSICAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../main/physical")
 set(NARA_VISION_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../main/vision")
+set(NARA_OFFLINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../main/offline")
 
 add_library(nara_face_logic
   "${NARA_FACE_DIR}/nara_face_controller.cc"
@@ -62,3 +63,17 @@ add_executable(nara-vision-target-test
 )
 target_include_directories(nara-vision-target-test PRIVATE "${NARA_VISION_DIR}")
 add_test(NAME nara-vision-target COMMAND nara-vision-target-test)
+
+add_executable(nara-touch-classifier-test
+  tests/touch_classifier_test.cpp
+  "${NARA_PHYSICAL_DIR}/touch_classifier.cc"
+)
+target_include_directories(nara-touch-classifier-test PRIVATE "${NARA_PHYSICAL_DIR}")
+add_test(NAME nara-touch-classifier COMMAND nara-touch-classifier-test)
+
+add_executable(nara-offline-utility-test
+  tests/offline_utility_state_test.cpp
+  "${NARA_OFFLINE_DIR}/offline_utility_state.cc"
+)
+target_include_directories(nara-offline-utility-test PRIVATE "${NARA_OFFLINE_DIR}")
+add_test(NAME nara-offline-utility COMMAND nara-offline-utility-test)

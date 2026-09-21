@@ -5,6 +5,9 @@ set(SOURCES "audio/audio_codec.cc"
             "audio/demuxer/ogg_demuxer.cc"
             "notify/notify_player.cc"
             "physical/gesture_classifier.cc"
+            "physical/touch_classifier.cc"
+            "offline/offline_utility_state.cc"
+            "offline/pcf85063_clock.cc"
             "vision/vision_target_tracker.cc"
             "vision/sscma_i2c.cc"
             "audio/codecs/no_audio_codec.cc"
@@ -46,7 +49,7 @@ set(SOURCES "audio/audio_codec.cc"
             "main.cc"
             )
 
-set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols")
+set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols" "physical" "offline")
 
 # Add board common files
 list(APPEND SOURCES
