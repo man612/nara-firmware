@@ -93,6 +93,11 @@ add_executable(nara-offline-capsule-test
   tests/offline_capsule_test.cpp
   "${NARA_OFFLINE_DIR}/offline_capsule.cc"
 )
-target_include_directories(nara-offline-capsule-test PRIVATE "${NARA_OFFLINE_DIR}")
+target_include_directories(
+  nara-offline-capsule-test
+  PRIVATE
+    "${NARA_OFFLINE_DIR}"
+    "${cjson_SOURCE_DIR}"
+)
 target_link_libraries(nara-offline-capsule-test PRIVATE cjson)
 add_test(NAME nara-offline-capsule COMMAND nara-offline-capsule-test)
