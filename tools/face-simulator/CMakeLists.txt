@@ -28,6 +28,7 @@ FetchContent_MakeAvailable(lvgl)
 
 set(NARA_FACE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../main/display/nara_face")
 set(NARA_PHYSICAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../main/physical")
+set(NARA_VISION_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../main/vision")
 
 add_library(nara_face_logic
   "${NARA_FACE_DIR}/nara_face_controller.cc"
@@ -54,3 +55,10 @@ add_executable(nara-gesture-classifier-test
 )
 target_include_directories(nara-gesture-classifier-test PRIVATE "${NARA_PHYSICAL_DIR}")
 add_test(NAME nara-gesture-classifier COMMAND nara-gesture-classifier-test)
+
+add_executable(nara-vision-target-test
+  tests/vision_target_tracker_test.cpp
+  "${NARA_VISION_DIR}/vision_target_tracker.cc"
+)
+target_include_directories(nara-vision-target-test PRIVATE "${NARA_VISION_DIR}")
+add_test(NAME nara-vision-target COMMAND nara-vision-target-test)
