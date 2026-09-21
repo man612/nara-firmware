@@ -135,6 +135,9 @@ void WifiBoard::OnNetworkEvent(NetworkEvent event, const std::string& data) {
         case NetworkEvent::Disconnected:
             ESP_LOGW(TAG, "WiFi disconnected");
             break;
+        case NetworkEvent::Unavailable:
+            ESP_LOGW(TAG, "No saved WiFi is reachable yet; station remains active and will keep retrying");
+            break;
         case NetworkEvent::WifiConfigModeEnter:
             ESP_LOGI(TAG, "WiFi config mode entered");
             in_config_mode_ = true;
@@ -161,10 +164,14 @@ void WifiBoard::SetNetworkEventCallback(NetworkEventCallback callback) {
 
 void WifiBoard::OnWifiConnectTimeout(void* arg) {
     auto* board = static_cast<WifiBoard*>(arg);
-    ESP_LOGW(TAG, "WiFi connection timeout, entering config mode");
+    ESP_LOGW(TAG,
+             "Initial WiFi connection window expired; keeping station active for background retry");
 
-    WifiManager::GetInstance().StopStation();
-    board->StartWifiConfigMode();
+    // A configured device should remain useful offline. The underlying
+    // WifiStation already keeps scanning all saved SSIDs with exponential
+    // backoff, so do not tear it down or force factory-style provisioning.
+    // Users can still enter WiFi configuration explicitly from the device.
+    board->OnNetworkEvent(NetworkEvent::Unavailable);
 }
 
 void WifiBoard::StartWifiConfigMode() {
