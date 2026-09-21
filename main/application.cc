@@ -1468,6 +1468,27 @@ void Application::SetAecMode(AecMode mode) {
 
 void Application::PlaySound(const std::string_view& sound) { audio_service_.PlaySound(sound); }
 
+bool Application::PlayAssetSound(const std::string& asset_name) {
+    if (asset_name.empty() || asset_name.size() > 96 ||
+        asset_name.find("..") != std::string::npos ||
+        asset_name.front() == '/' || asset_name.front() == '\\') {
+        ESP_LOGW(TAG, "Rejected invalid reaction asset name");
+        return false;
+    }
+
+    void* data = nullptr;
+    size_t size = 0;
+    if (!Assets::GetInstance().GetAssetData(asset_name, data, size) ||
+        data == nullptr || size == 0) {
+        ESP_LOGW(TAG, "Reaction asset not found: %s", asset_name.c_str());
+        return false;
+    }
+
+    audio_service_.PlaySound(std::string_view(
+        static_cast<const char*>(data), size));
+    return true;
+}
+
 void Application::ResetProtocol() {
     Schedule([this]() {
         if (GetDeviceState() == kDeviceStateNotifying) {
