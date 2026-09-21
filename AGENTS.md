@@ -32,3 +32,15 @@ Host tests:
 ## Upstream lineage
 
 Some embedded foundation is derived from MIT-licensed XiaoZhi ESP32 code. Do not remove required copyright/license notices. New product behavior and branding belong to Nara Firmware.
+
+
+## Repository ownership
+
+- Original Nara Firmware material is proprietary source-available software.
+- Do not describe Nara Firmware as open source as a whole.
+- Do not replace or weaken LICENSE without explicit owner instruction.
+- Preserve third-party notices and licenses exactly where required.
+- XiaoZhi-derived material remains under its MIT terms; never claim exclusive
+  ownership of upstream code.
+- Unsolicited external contributions are not accepted by default; read
+  CONTRIBUTING.md before merging third-party work.

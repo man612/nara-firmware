@@ -1,23 +1,75 @@
-MIT License
+NARA FIRMWARE PROPRIETARY SOURCE-AVAILABLE TERMS
 
-Copyright (c) 2025 Shenzhen Xinzhi Future Technology Co., Ltd.
-Copyright (c) 2025 Project Contributors
-Copyright (c) 2026 Nara contributors
+Copyright © 2026 man612. All rights reserved in original Nara Firmware material.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This repository is source-available for transparency, inspection, and
+reference. It is not open-source software as a whole, and this notice does not
+grant an open-source license to Nara-authored material.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. Nara-owned material
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Except for third-party material expressly identified by an applicable notice
+or license, original Nara Firmware source code, documentation, configuration,
+product behavior, branding, device integration, project structure,
+modifications, and other original material (the "Nara Firmware Work") are
+proprietary to man612.
+
+2. No license granted to Nara-owned material
+
+No copyright, patent, trademark, or other intellectual-property license is
+granted to the Nara Firmware Work by publication of this repository.
+
+Except to the extent a right cannot lawfully be restricted, or to the extent
+GitHub's Terms of Service require rights necessary to operate a public
+repository on GitHub, you may not, without prior written permission from the
+copyright owner:
+
+- use or deploy the Nara Firmware Work;
+- copy or reproduce the Nara Firmware Work;
+- modify, adapt, translate, merge, or create derivative works from it;
+- publish, distribute, sublicense, sell, rent, host, flash, ship, or otherwise
+  provide it to another person or organization;
+- incorporate it into another product, service, firmware image, dataset, or
+  software project; or
+- remove or alter copyright, ownership, attribution, or license notices.
+
+Public visibility, cloning, indexing, or technical accessibility does not by
+itself create permission beyond rights that already exist under applicable law,
+GitHub's Terms of Service, or an applicable third-party license.
+
+3. Third-party exceptions
+
+This repository contains or depends on third-party material. Third-party
+material remains governed exclusively by its own applicable license terms.
+
+In particular, portions of the embedded foundation are derived from the
+MIT-licensed XiaoZhi ESP32 project. The applicable MIT notice is preserved in:
+
+THIRD_PARTY_LICENSES/XIAOZHI-MIT.txt
+
+Nothing in these proprietary terms removes, reduces, or replaces rights that
+a third-party license already grants for the material covered by that
+third-party license.
+
+4. Separate permission
+
+Any permission to use Nara-owned material must be granted separately and
+explicitly in writing by the copyright owner. Permission for one person,
+project, version, device, or purpose does not imply permission for another.
+
+5. Trademarks and project identity
+
+No right is granted to use the Nara name, branding, logos, product identity,
+or other source-identifying marks in a way that suggests affiliation,
+endorsement, or ownership.
+
+6. No warranty
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, NARA-OWNED MATERIAL IS PROVIDED "AS
+IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND
+NON-INFRINGEMENT. THE COPYRIGHT OWNER IS NOT LIABLE FOR ANY CLAIM, DAMAGES,
+OR OTHER LIABILITY ARISING FROM ACCESS TO OR USE OF NARA-OWNED MATERIAL.
+
+For licensing or other written permission, contact the repository owner
+through GitHub.
