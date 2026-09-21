@@ -62,3 +62,10 @@ add_executable(nara-vision-target-test
 )
 target_include_directories(nara-vision-target-test PRIVATE "${NARA_VISION_DIR}")
 add_test(NAME nara-vision-target COMMAND nara-vision-target-test)
+
+add_executable(nara-touch-classifier-test
+  tests/touch_classifier_test.cpp
+  "${NARA_PHYSICAL_DIR}/touch_classifier.cc"
+)
+target_include_directories(nara-touch-classifier-test PRIVATE "${NARA_PHYSICAL_DIR}")
+add_test(NAME nara-touch-classifier COMMAND nara-touch-classifier-test)
