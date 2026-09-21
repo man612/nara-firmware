@@ -22,6 +22,7 @@
 #include <memory>
 #include <ctime>
 #include <cstdio>
+#include <cstdlib>
 #include <sys/time.h>
 #include <esp_timer.h>
 #include <driver/i2c_master.h>
@@ -570,9 +571,23 @@ private:
 
 
     void InitializeTouch() {
-        esp_lcd_panel_io_i2c_config_t io_config =
-            ESP_LCD_TOUCH_IO_I2C_CST816S_CONFIG();
-        io_config.scl_speed_hz = 400000;
+        // The component macro still uses the pre-IDF-6 designated-field
+        // order. Keep an equivalent explicit config in declaration order so
+        // this target remains valid C++ under ESP-IDF 6.x.
+        const esp_lcd_panel_io_i2c_config_t io_config = {
+            .dev_addr = ESP_LCD_TOUCH_IO_I2C_CST816S_ADDRESS,
+            .scl_speed_hz = 400000,
+            .control_phase_bytes = 1,
+            .dc_bit_offset = 0,
+            .lcd_cmd_bits = 8,
+            .lcd_param_bits = 0,
+            .on_color_trans_done = nullptr,
+            .user_ctx = nullptr,
+            .flags = {
+                .dc_low_on_data = 0,
+                .disable_control_phase = 1,
+            },
+        };
 
         esp_err_t err =
             esp_lcd_new_panel_io_i2c(i2c_bus_, &io_config, &touch_io_);
@@ -1004,15 +1019,14 @@ private:
 
         bool pressed = false;
         if (esp_lcd_touch_read_data(touch_) == ESP_OK) {
-            uint16_t x[1] = {last_touch_x_};
-            uint16_t y[1] = {last_touch_y_};
-            uint16_t strength[1] = {};
+            esp_lcd_touch_point_data_t point{};
             uint8_t points = 0;
-            pressed = esp_lcd_touch_get_coordinates(
-                touch_, x, y, strength, &points, 1);
-            if (pressed && points > 0) {
-                last_touch_x_ = x[0];
-                last_touch_y_ = y[0];
+            if (esp_lcd_touch_get_data(
+                    touch_, &point, &points, 1) == ESP_OK &&
+                points > 0) {
+                pressed = true;
+                last_touch_x_ = point.x;
+                last_touch_y_ = point.y;
             }
         }
 
