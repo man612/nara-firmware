@@ -12,7 +12,6 @@ set(SOURCES "audio/audio_codec.cc"
             "games/nara_says_game.cc"
             "diagnostics/network_probe.cc"
             "remote/remote_inbox_client.cc"
-            "provisioning/dpp_commissioner.cc"
             "vision/vision_target_tracker.cc"
             "vision/sscma_i2c.cc"
             "audio/codecs/no_audio_codec.cc"
@@ -55,6 +54,10 @@ set(SOURCES "audio/audio_codec.cc"
             )
 
 set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols" "physical" "offline" "games" "diagnostics" "remote" "provisioning")
+
+if(CONFIG_ESP_WIFI_DPP_SUPPORT)
+    list(APPEND SOURCES "provisioning/dpp_commissioner.cc")
+endif()
 
 # Add board common files
 list(APPEND SOURCES
