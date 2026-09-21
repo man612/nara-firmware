@@ -575,7 +575,8 @@ void Application::CheckNewVersion() {
         retry_delay = 10;  // Reset retry delay
 
         if (ota_->HasNewVersion()) {
-            if (UpgradeFirmware(ota_->GetFirmwareUrl(), ota_->GetFirmwareVersion())) {
+            if (UpgradeFirmware(ota_->GetFirmwareUrl(), ota_->GetFirmwareVersion(),
+                                ota_->GetFirmwareSha256(), ota_->GetFirmwareSize())) {
                 return;  // This line will never be reached after reboot
             }
             // If upgrade failed, continue to normal operation
@@ -1309,7 +1310,9 @@ void Application::Reboot() {
     esp_restart();
 }
 
-bool Application::UpgradeFirmware(const std::string& url, const std::string& version) {
+bool Application::UpgradeFirmware(const std::string& url, const std::string& version,
+                                  const std::string& expected_sha256,
+                                  size_t expected_size) {
     auto& board = Board::GetInstance();
     auto display = board.GetDisplay();
 
@@ -1340,13 +1343,15 @@ bool Application::UpgradeFirmware(const std::string& url, const std::string& ver
     audio_service_.Stop();
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    bool upgrade_success = Ota::Upgrade(upgrade_url, [this, display](int progress, size_t speed) {
+    bool upgrade_success =
+        Ota::Upgrade(upgrade_url, expected_sha256, expected_size,
+                     [this, display](int progress, size_t speed) {
         char buffer[32];
         snprintf(buffer, sizeof(buffer), "%d%% %uKB/s", progress, speed / 1024);
-        Schedule([display, message = std::string(buffer)]() {
-            display->SetChatMessage("system", message.c_str());
-        });
-    });
+                         Schedule([display, message = std::string(buffer)]() {
+                             display->SetChatMessage("system", message.c_str());
+                         });
+                     });
 
     if (!upgrade_success) {
         // Upgrade failed, restart audio service and continue running
