@@ -5,12 +5,24 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 #include <esp_timer.h>
+#include <memory>
+#include <string>
+
+#if CONFIG_ESP_WIFI_DPP_SUPPORT
+#include "provisioning/dpp_commissioner.h"
+#endif
 
 class WifiBoard : public Board {
 protected:
     esp_timer_handle_t connect_timer_ = nullptr;
     bool in_config_mode_ = false;
     NetworkEventCallback network_event_callback_ = nullptr;
+
+#if CONFIG_ESP_WIFI_DPP_SUPPORT
+    std::unique_ptr<NaraDppCommissioner> dpp_commissioner_;
+    virtual void OnDppUriReady(const std::string& uri);
+    void StartDppConfigMode();
+#endif
 
     virtual std::string GetBoardJson() override;
 
@@ -59,6 +71,15 @@ public:
      * Enter WiFi configuration mode (thread-safe, can be called from any task)
      */
     void EnterWifiConfigMode();
+
+#if CONFIG_ESP_WIFI_DPP_SUPPORT
+    /**
+     * Enter Wi-Fi Easy Connect (DPP) QR commissioning. This is preferred over
+     * the inherited open/plain-HTTP configuration portal on capable phones.
+     */
+    void EnterDppConfigMode();
+    bool IsDppConfigMode() const;
+#endif
     
     /**
      * Check if in WiFi config mode
