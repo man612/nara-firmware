@@ -18,6 +18,8 @@ public:
     void SetEmotion(const char* emotion) override;
     void SetInteraction(const char* interaction) override;
     void SetSpeechLevel(float level) override;
+    void SetGazeTarget(float x, float y) override;
+    void ClearGazeTarget() override;
     void SetPowerSaveMode(bool on) override;
 
 private:

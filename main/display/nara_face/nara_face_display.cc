@@ -187,6 +187,16 @@ void NaraFaceDisplay::SetSpeechLevel(float level) {
     controller_.SetSpeechLevel(level);
 }
 
+void NaraFaceDisplay::SetGazeTarget(float x, float y) {
+    std::lock_guard<std::mutex> lock(face_mutex_);
+    controller_.SetGaze(x, y);
+}
+
+void NaraFaceDisplay::ClearGazeTarget() {
+    std::lock_guard<std::mutex> lock(face_mutex_);
+    controller_.ClearManualGaze();
+}
+
 void NaraFaceDisplay::SetPowerSaveMode(bool on) {
     SetChatMessage("system", "");
     SetInteraction(on ? "sleeping" : "idle");
