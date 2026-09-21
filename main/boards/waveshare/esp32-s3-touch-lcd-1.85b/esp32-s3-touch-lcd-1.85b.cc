@@ -12,6 +12,7 @@
 #include "offline/pcf85063_clock.h"
 #include "games/nara_says_game.h"
 #include "diagnostics/network_probe.h"
+#include "remote/remote_inbox_client.h"
 #include "vision/sscma_i2c.h"
 #include "vision/vision_target_tracker.h"
 #include "settings.h"
@@ -461,6 +462,7 @@ private:
     NaraOfflineCapsule offline_capsule_;
     size_t offline_capsule_cursor_ = 0;
     NaraSaysGame nara_says_;
+    NaraRemoteInboxClient remote_inbox_;
     std::unique_ptr<SscmaI2cVisionSensor> vision_sensor_;
     std::unique_ptr<NaraVisionTargetTracker> vision_tracker_;
     bool battery_saver_active_ = false;
@@ -1749,6 +1751,80 @@ private:
                  static_cast<int>(config.min_score));
     }
 
+    void StartRemoteInboxTask() {
+        Settings settings("remote_inbox", false);
+        if (!settings.GetBool("enabled", true)) {
+            ESP_LOGI(TAG, "Remote idle inbox disabled by settings");
+            return;
+        }
+
+        xTaskCreate(
+            [](void* arg) {
+                auto* self =
+                    static_cast<WaveshareEsp32s3TouchLcd1_85B*>(arg);
+                Settings settings("remote_inbox", false);
+                const int normal_ms = std::clamp<int>(
+                    settings.GetInt("poll_ms", 15000),
+                    5000, 300000);
+                const int eco_ms = std::clamp<int>(
+                    settings.GetInt("eco_poll_ms", 60000),
+                    normal_ms, 300000);
+                const int critical_ms = std::clamp<int>(
+                    settings.GetInt("critical_poll_ms", 120000),
+                    eco_ms, 300000);
+
+                while (true) {
+                    auto& app = Application::GetInstance();
+                    if (
+                        app.GetConnectivityState() ==
+                            kConnectivityNetworkAvailable &&
+                        app.GetDeviceState() == kDeviceStateIdle) {
+                        NaraRemoteInboxItem item;
+                        if (self->remote_inbox_.Poll(item)) {
+                            if (item.kind == NaraRemoteInboxKind::Notify) {
+                                const std::string id = item.id;
+                                const std::string text = item.text;
+                                const std::string emotion =
+                                    self->IsValidEmotion(item.emotion)
+                                        ? item.emotion
+                                        : "neutral";
+                                const std::string sound =
+                                    self->IsValidSoundSpec(item.sound)
+                                        ? item.sound
+                                        : "none";
+                                app.Schedule(
+                                    [self, text, emotion, sound]() {
+                                        self->GetDisplay()->SetEmotion(
+                                            emotion.c_str());
+                                        self->GetDisplay()->ShowNotification(
+                                            text.c_str(), 6500);
+                                        if (sound != "none") {
+                                            self->PlayReactionSound(sound);
+                                        }
+                                    });
+                                (void)self->remote_inbox_.Ack(id);
+                            } else if (
+                                item.kind ==
+                                NaraRemoteInboxKind::Voice) {
+                                // The prompt stays server-side. Polling only
+                                // tells the device to open a one-shot channel.
+                                app.OpenRemoteVoiceChannel();
+                            }
+                        }
+                    }
+
+                    const int delay_ms =
+                        self->battery_critical_
+                            ? critical_ms
+                            : self->battery_saver_active_
+                                ? eco_ms
+                                : normal_ms;
+                    vTaskDelay(pdMS_TO_TICKS(delay_ms));
+                }
+            },
+            "nara_inbox", 6144, this, 1, nullptr);
+    }
+
     void StartPhysicalReflexTask() {
         xTaskCreate(
             [](void* arg) {
@@ -1975,6 +2051,7 @@ public:
         GetBacklight()->RestoreBrightness();
         InitializeOptionalVision();
         StartPhysicalReflexTask();
+        StartRemoteInboxTask();
     }
 
     virtual AudioCodec* GetAudioCodec() override {

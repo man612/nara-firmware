@@ -297,6 +297,18 @@ void Application::Run() {
 
         if (bits & MAIN_EVENT_CLOCK_TICK) {
             clock_ticks_++;
+            if (
+                remote_voice_active_ &&
+                remote_voice_deadline_us_ > 0 &&
+                esp_timer_get_time() >= remote_voice_deadline_us_) {
+                ESP_LOGW(TAG, "Remote voice turn timed out; closing channel");
+                remote_voice_active_ = false;
+                remote_voice_deadline_us_ = 0;
+                if (protocol_ && protocol_->IsAudioChannelOpened()) {
+                    protocol_->CloseAudioChannel();
+                }
+                SetDeviceState(kDeviceStateIdle);
+            }
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
 
@@ -655,6 +667,8 @@ void Application::InitializeProtocol() {
     protocol_->OnAudioChannelClosed([this, &board]() {
         board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
         Schedule([this]() {
+            remote_voice_active_ = false;
+            remote_voice_deadline_us_ = 0;
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
             SetDeviceState(kDeviceStateIdle);
@@ -714,7 +728,14 @@ void Application::InitializeProtocol() {
             } else if (strcmp(state->valuestring, "stop") == 0) {
                 Schedule([this]() {
                     if (GetDeviceState() == kDeviceStateSpeaking) {
-                        if (listening_mode_ == kListeningModeManualStop) {
+                        if (remote_voice_active_) {
+                            remote_voice_active_ = false;
+                            remote_voice_deadline_us_ = 0;
+                            if (protocol_ && protocol_->IsAudioChannelOpened()) {
+                                protocol_->CloseAudioChannel();
+                            }
+                            SetDeviceState(kDeviceStateIdle);
+                        } else if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
                         } else {
                             SetDeviceState(kDeviceStateListening);
@@ -861,6 +882,48 @@ void Application::ToggleChatState() { xEventGroupSetBits(event_group_, MAIN_EVEN
 void Application::StartListening() { xEventGroupSetBits(event_group_, MAIN_EVENT_START_LISTENING); }
 
 void Application::StopListening() { xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING); }
+
+void Application::OpenRemoteVoiceChannel() {
+    Schedule([this]() {
+        if (
+            GetConnectivityState() != kConnectivityNetworkAvailable ||
+            GetDeviceState() != kDeviceStateIdle ||
+            protocol_ == nullptr) {
+            return;
+        }
+
+        if (protocol_->IsAudioChannelOpened()) {
+            return;
+        }
+
+        remote_voice_active_ = true;
+        remote_voice_deadline_us_ =
+            esp_timer_get_time() + 90LL * 1000LL * 1000LL;
+        if (!SetDeviceState(kDeviceStateConnecting)) {
+            remote_voice_active_ = false;
+            remote_voice_deadline_us_ = 0;
+            return;
+        }
+
+        auto& board = Board::GetInstance();
+        board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+
+        if (!protocol_->OpenAudioChannel()) {
+            remote_voice_active_ = false;
+            remote_voice_deadline_us_ = 0;
+            SetDeviceState(kDeviceStateIdle);
+            return;
+        }
+
+        // Do not enable microphone listening for a remote text turn. The
+        // gateway injects the queued text after the session becomes ready.
+        // If TTS has not started yet, return to idle while keeping the
+        // audio WebSocket open; incoming TTS start may transition idle->speaking.
+        if (GetDeviceState() == kDeviceStateConnecting) {
+            SetDeviceState(kDeviceStateIdle);
+        }
+    });
+}
 
 void Application::HandleToggleChatEvent() {
     auto state = GetDeviceState();
