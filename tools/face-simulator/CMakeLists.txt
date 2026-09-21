@@ -26,6 +26,17 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(lvgl)
 
+FetchContent_Declare(
+  cjson
+  GIT_REPOSITORY https://github.com/DaveGamble/cJSON.git
+  GIT_TAG v1.7.19
+  GIT_SHALLOW TRUE
+)
+set(ENABLE_CJSON_TEST OFF CACHE BOOL "" FORCE)
+set(ENABLE_CJSON_UTILS OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(cjson)
+
 set(NARA_FACE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../main/display/nara_face")
 set(NARA_PHYSICAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../main/physical")
 set(NARA_VISION_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../main/vision")
@@ -77,3 +88,16 @@ add_executable(nara-offline-utility-test
 )
 target_include_directories(nara-offline-utility-test PRIVATE "${NARA_OFFLINE_DIR}")
 add_test(NAME nara-offline-utility COMMAND nara-offline-utility-test)
+
+add_executable(nara-offline-capsule-test
+  tests/offline_capsule_test.cpp
+  "${NARA_OFFLINE_DIR}/offline_capsule.cc"
+)
+target_include_directories(
+  nara-offline-capsule-test
+  PRIVATE
+    "${NARA_OFFLINE_DIR}"
+    "${cjson_SOURCE_DIR}"
+)
+target_link_libraries(nara-offline-capsule-test PRIVATE cjson)
+add_test(NAME nara-offline-capsule COMMAND nara-offline-capsule-test)
