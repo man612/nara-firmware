@@ -21,6 +21,7 @@ protected:
 #if CONFIG_ESP_WIFI_DPP_SUPPORT
     std::unique_ptr<NaraDppCommissioner> dpp_commissioner_;
     virtual void OnDppUriReady(const std::string& uri);
+    virtual void OnDppConfigFinished(bool success);
     void StartDppConfigMode();
 #endif
 
