@@ -8,6 +8,7 @@
 #include "physical/gesture_classifier.h"
 #include "physical/touch_classifier.h"
 #include "offline/offline_utility_state.h"
+#include "offline/offline_capsule.h"
 #include "offline/pcf85063_clock.h"
 #include "vision/sscma_i2c.h"
 #include "vision/vision_target_tracker.h"
@@ -455,6 +456,8 @@ private:
     NaraGestureClassifier gesture_classifier_;
     NaraTouchClassifier touch_classifier_;
     NaraOfflineUtilityState offline_utility_;
+    NaraOfflineCapsule offline_capsule_;
+    size_t offline_capsule_cursor_ = 0;
     std::unique_ptr<SscmaI2cVisionSensor> vision_sensor_;
     std::unique_ptr<NaraVisionTargetTracker> vision_tracker_;
     bool battery_saver_active_ = false;
@@ -993,6 +996,8 @@ private:
                 Settings settings("offline", false);
                 StartLocalTimer(
                     settings.GetInt("quick_sec", 300), true);
+            } else if (gesture == NaraTouchGesture::Stroke) {
+                ShowNextOfflineCapsuleFact();
             }
         }
 
@@ -1126,6 +1131,148 @@ private:
                     }
                 }
                 return true;
+            });
+    }
+
+
+    void InitializeOfflineCapsule() {
+        void* data = nullptr;
+        size_t size = 0;
+        if (!Assets::GetInstance().GetAssetData(
+                "offline_capsule.json", data, size)) {
+            ESP_LOGI(TAG, "No offline personal capsule asset installed");
+            return;
+        }
+
+        if (!offline_capsule_.LoadFromJson(
+                static_cast<const char*>(data), size)) {
+            ESP_LOGW(TAG, "Ignoring invalid offline personal capsule");
+            return;
+        }
+
+        ESP_LOGI(
+            TAG,
+            "Offline capsule loaded: facts=%u revision=%.12s",
+            static_cast<unsigned>(offline_capsule_.size()),
+            offline_capsule_.revision().c_str());
+    }
+
+    void ShowOfflineCapsuleFact(const NaraOfflineCapsuleFact* fact) {
+        if (fact == nullptr) {
+            GetDisplay()->ShowNotification(
+                "No offline memory is available", 3500);
+            return;
+        }
+        GetDisplay()->SetEmotion("happy");
+        GetDisplay()->ShowNotification(fact->text, 6500);
+    }
+
+    void ShowNextOfflineCapsuleFact() {
+        if (!offline_capsule_.loaded() ||
+            offline_capsule_.size() == 0) {
+            ShowOfflineCapsuleFact(nullptr);
+            return;
+        }
+        const auto* fact = offline_capsule_.At(
+            offline_capsule_cursor_ % offline_capsule_.size());
+        offline_capsule_cursor_ =
+            (offline_capsule_cursor_ + 1) %
+            offline_capsule_.size();
+        ShowOfflineCapsuleFact(fact);
+    }
+
+    void InitializeOfflineCapsuleTools() {
+        McpServer::GetInstance().AddTool(
+            "self.offline.capsule",
+            "Read the permission-filtered personal capsule already stored locally. "
+            "action is status, search, next, or show. This never accesses hidden "
+            "online memory or changes capsule permissions.",
+            PropertyList({
+                Property("action", kPropertyTypeString).SetMaxLength(12),
+                Property(
+                    "query", kPropertyTypeString,
+                    std::string("")).SetMaxLength(160),
+                Property("index", kPropertyTypeInteger, 0, 0, 63),
+            }),
+            [this](const PropertyList& properties) -> ToolResult {
+                const auto action =
+                    properties["action"].value<std::string>();
+                if (action == "status") {
+                    if (!offline_capsule_.loaded()) {
+                        return std::string(
+                            "offline capsule is not installed");
+                    }
+                    char status[180] = {};
+                    std::snprintf(
+                        status, sizeof(status),
+                        "offline capsule loaded; facts=%u; revision=%.16s; "
+                        "recipient=%s; subject=%s",
+                        static_cast<unsigned>(offline_capsule_.size()),
+                        offline_capsule_.revision().c_str(),
+                        offline_capsule_.recipient_person_id().c_str(),
+                        offline_capsule_.subject_person_id().c_str());
+                    return std::string(status);
+                }
+
+                if (!offline_capsule_.loaded()) {
+                    return std::unexpected(
+                        "offline capsule is not installed");
+                }
+
+                if (action == "next") {
+                    if (offline_capsule_.size() == 0) {
+                        return std::unexpected(
+                            "offline capsule has no facts");
+                    }
+                    const auto* fact = offline_capsule_.At(
+                        offline_capsule_cursor_ %
+                        offline_capsule_.size());
+                    offline_capsule_cursor_ =
+                        (offline_capsule_cursor_ + 1) %
+                        offline_capsule_.size();
+                    ShowOfflineCapsuleFact(fact);
+                    return fact != nullptr
+                        ? fact->text
+                        : std::string("no fact");
+                }
+
+                if (action == "show") {
+                    const auto index =
+                        properties["index"].value<int>();
+                    const auto* fact =
+                        offline_capsule_.At(
+                            static_cast<size_t>(index));
+                    if (fact == nullptr) {
+                        return std::unexpected(
+                            "offline capsule index is out of range");
+                    }
+                    ShowOfflineCapsuleFact(fact);
+                    return fact->text;
+                }
+
+                if (action == "search") {
+                    const auto query =
+                        properties["query"].value<std::string>();
+                    if (query.empty()) {
+                        return std::unexpected(
+                            "query is required for capsule search");
+                    }
+                    const auto matches =
+                        offline_capsule_.Search(query, 3);
+                    if (matches.empty()) {
+                        return std::string("no offline capsule match");
+                    }
+
+                    std::string result;
+                    for (size_t i = 0; i < matches.size(); ++i) {
+                        if (i != 0) result += " | ";
+                        result += matches[i]->text;
+                    }
+                    return result;
+                }
+
+                return std::unexpected(
+                    "action must be status, search, next, or show");
             });
     }
 
@@ -1574,6 +1721,8 @@ public:
         InitializeButtons();
         InitializeReactionTools();
         InitializeOfflineTools();
+        InitializeOfflineCapsule();
+        InitializeOfflineCapsuleTools();
         GetBacklight()->RestoreBrightness();
         InitializeOptionalVision();
         StartPhysicalReflexTask();
