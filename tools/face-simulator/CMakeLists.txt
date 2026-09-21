@@ -27,6 +27,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(lvgl)
 
 set(NARA_FACE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../main/display/nara_face")
+set(NARA_PHYSICAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../main/physical")
 
 add_library(nara_face_logic
   "${NARA_FACE_DIR}/nara_face_controller.cc"
@@ -46,3 +47,10 @@ enable_testing()
 add_executable(nara-face-controller-test tests/controller_test.cpp)
 target_link_libraries(nara-face-controller-test PRIVATE nara_face_logic)
 add_test(NAME nara-face-controller COMMAND nara-face-controller-test)
+
+add_executable(nara-gesture-classifier-test
+  tests/gesture_classifier_test.cpp
+  "${NARA_PHYSICAL_DIR}/gesture_classifier.cc"
+)
+target_include_directories(nara-gesture-classifier-test PRIVATE "${NARA_PHYSICAL_DIR}")
+add_test(NAME nara-gesture-classifier COMMAND nara-gesture-classifier-test)
