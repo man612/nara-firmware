@@ -458,6 +458,7 @@ private:
     NaraOfflineUtilityState offline_utility_;
     NaraOfflineCapsule offline_capsule_;
     size_t offline_capsule_cursor_ = 0;
+    NaraSaysGame nara_says_;
     std::unique_ptr<SscmaI2cVisionSensor> vision_sensor_;
     std::unique_ptr<NaraVisionTargetTracker> vision_tracker_;
     bool battery_saver_active_ = false;
@@ -942,8 +943,124 @@ private:
         PlayReactionSound(sound);
     }
 
+    NaraGameInput TouchToGameInput(NaraTouchGesture gesture) const {
+        switch (gesture) {
+            case NaraTouchGesture::Tap:
+                return NaraGameInput::Tap;
+            case NaraTouchGesture::DoubleTap:
+                return NaraGameInput::DoubleTap;
+            case NaraTouchGesture::Hold:
+                return NaraGameInput::Hold;
+            case NaraTouchGesture::Stroke:
+                return NaraGameInput::Stroke;
+            default:
+                return NaraGameInput::None;
+        }
+    }
+
+    void ShowNaraSaysPrompt() {
+        if (!nara_says_.snapshot().active) return;
+        const auto& state = nara_says_.snapshot();
+        char message[128] = {};
+        std::snprintf(
+            message, sizeof(message),
+            "Nara Says %d/%d: %s",
+            state.round,
+            state.target_rounds,
+            NaraSaysGame::Prompt(state.expected));
+        GetDisplay()->ShowNotification(message, 4500);
+    }
+
+    void HandleNaraSaysEvent(NaraGameEvent event) {
+        if (event == NaraGameEvent::None) return;
+
+        const auto& state = nara_says_.snapshot();
+        char message[128] = {};
+        switch (event) {
+            case NaraGameEvent::Correct:
+                GetDisplay()->SetEmotion("happy");
+                PlayReactionSound("builtin:popup");
+                std::snprintf(
+                    message, sizeof(message),
+                    "Correct! Score %d. %s",
+                    state.score,
+                    NaraSaysGame::Prompt(state.expected));
+                GetDisplay()->ShowNotification(message, 4200);
+                break;
+            case NaraGameEvent::Wrong:
+                GetDisplay()->SetEmotion("surprised");
+                PlayReactionSound("builtin:exclamation");
+                std::snprintf(
+                    message, sizeof(message),
+                    "Not that one. %d lives left. %s",
+                    state.lives,
+                    NaraSaysGame::Prompt(state.expected));
+                GetDisplay()->ShowNotification(message, 4500);
+                break;
+            case NaraGameEvent::Timeout:
+                GetDisplay()->SetEmotion("sad");
+                PlayReactionSound("builtin:exclamation");
+                std::snprintf(
+                    message, sizeof(message),
+                    "Too slow. %d lives left. %s",
+                    state.lives,
+                    NaraSaysGame::Prompt(state.expected));
+                GetDisplay()->ShowNotification(message, 4500);
+                break;
+            case NaraGameEvent::Won:
+                GetDisplay()->SetEmotion("happy");
+                PlayReactionSound("builtin:popup");
+                std::snprintf(
+                    message, sizeof(message),
+                    "You win! Score %d/%d",
+                    state.score,
+                    state.target_rounds);
+                GetDisplay()->ShowNotification(message, 6000);
+                break;
+            case NaraGameEvent::Lost:
+                GetDisplay()->SetEmotion("sad");
+                PlayReactionSound("builtin:exclamation");
+                std::snprintf(
+                    message, sizeof(message),
+                    "Game over. Score %d/%d",
+                    state.score,
+                    state.target_rounds);
+                GetDisplay()->ShowNotification(message, 6000);
+                break;
+            case NaraGameEvent::Stopped:
+                GetDisplay()->SetEmotion("neutral");
+                GetDisplay()->ShowNotification("Nara Says stopped", 2500);
+                break;
+            case NaraGameEvent::Started:
+                ShowNaraSaysPrompt();
+                break;
+            case NaraGameEvent::None:
+                break;
+        }
+    }
+
+    bool HandleNaraSaysInput(NaraGameInput input, uint32_t now_ms) {
+        if (!nara_says_.snapshot().active) return false;
+        if (input != NaraGameInput::None) {
+            HandleNaraSaysEvent(nara_says_.Input(input, now_ms));
+        }
+        return true;
+    }
+
     void HandleMotionGesture(NaraMotionGesture gesture) {
         if (gesture == NaraMotionGesture::None) return;
+
+        const uint32_t now_ms =
+            static_cast<uint32_t>(esp_timer_get_time() / 1000ULL);
+        if (nara_says_.snapshot().active) {
+            if (gesture == NaraMotionGesture::Shake) {
+                HandleNaraSaysInput(NaraGameInput::Shake, now_ms);
+            }
+            // Flip/spin are deliberately not game prompts; ignore them while
+            // playing so the game does not encourage rough device handling.
+            return;
+        }
+
         Application::GetInstance().Schedule([this, gesture]() {
             RunGestureReaction(gesture, true);
         });
@@ -979,6 +1096,12 @@ private:
 
     void HandleTouchGesture(NaraTouchGesture gesture) {
         if (gesture == NaraTouchGesture::None) {
+            return;
+        }
+
+        const uint32_t now_ms =
+            static_cast<uint32_t>(esp_timer_get_time() / 1000ULL);
+        if (HandleNaraSaysInput(TouchToGameInput(gesture), now_ms)) {
             return;
         }
 
@@ -1277,6 +1400,125 @@ private:
     }
 
 
+    void InitializeCompanionTools() {
+        McpServer::GetInstance().AddTool(
+            "self.companion.control",
+            "Compact local companion control. op is notify, network_test, "
+            "game_start, game_stop, or game_status.",
+            PropertyList({
+                Property("op", kPropertyTypeString).SetMaxLength(16),
+                Property(
+                    "text", kPropertyTypeString,
+                    std::string("")).SetMaxLength(220),
+                Property(
+                    "emotion", kPropertyTypeString,
+                    std::string("")).SetMaxLength(16),
+                Property(
+                    "sound", kPropertyTypeString,
+                    std::string("")).SetMaxLength(110),
+                Property("rounds", kPropertyTypeInteger, 5, 1, 12),
+            }),
+            [this](const PropertyList& properties) -> ToolResult {
+                const std::string op =
+                    properties["op"].value<std::string>();
+
+                if (op == "notify") {
+                    const auto text =
+                        properties["text"].value<std::string>();
+                    const auto emotion =
+                        properties["emotion"].value<std::string>();
+                    const auto sound =
+                        properties["sound"].value<std::string>();
+                    if (text.empty()) {
+                        return std::unexpected(
+                            "text is required for notify");
+                    }
+                    if (!emotion.empty() &&
+                        !IsValidEmotion(emotion)) {
+                        return std::unexpected(
+                            "invalid notification emotion");
+                    }
+                    if (!sound.empty() &&
+                        !IsValidSoundSpec(sound)) {
+                        return std::unexpected(
+                            "invalid notification sound");
+                    }
+
+                    if (!emotion.empty()) {
+                        GetDisplay()->SetEmotion(emotion.c_str());
+                    }
+                    GetDisplay()->ShowNotification(text, 6500);
+                    if (!sound.empty()) {
+                        PlayReactionSound(sound);
+                    }
+                    return std::string("notification shown locally");
+                }
+
+                if (op == "network_test") {
+                    if (Application::GetInstance().GetConnectivityState() ==
+                        kConnectivityNetworkUnavailable) {
+                        return std::unexpected(
+                            "network is unavailable");
+                    }
+                    NaraNetworkProbe probe;
+                    const auto result = probe.RunQuick();
+                    const auto description =
+                        NaraNetworkProbe::Describe(result);
+                    if (!result.ok) {
+                        return std::unexpected(description);
+                    }
+                    GetDisplay()->ShowNotification(
+                        description, 7000);
+                    return description;
+                }
+
+                if (op == "game_start") {
+                    const uint32_t now_ms =
+                        static_cast<uint32_t>(
+                            esp_timer_get_time() / 1000ULL);
+                    const uint32_t seed =
+                        static_cast<uint32_t>(
+                            esp_timer_get_time()) ^
+                        static_cast<uint32_t>(
+                            last_touch_x_ << 16) ^
+                        last_touch_y_;
+                    nara_says_.Start(
+                        seed,
+                        now_ms,
+                        properties["rounds"].value<int>());
+                    GetDisplay()->SetEmotion("happy");
+                    ShowNaraSaysPrompt();
+                    return std::string(
+                        "Nara Says started; all gameplay is local");
+                }
+
+                if (op == "game_stop") {
+                    HandleNaraSaysEvent(nara_says_.Stop());
+                    return std::string("Nara Says stopped");
+                }
+
+                if (op == "game_status") {
+                    const auto& state = nara_says_.snapshot();
+                    char status[160] = {};
+                    std::snprintf(
+                        status, sizeof(status),
+                        "active=%s; round=%d/%d; score=%d; lives=%d; prompt=%s",
+                        state.active ? "true" : "false",
+                        state.round,
+                        state.target_rounds,
+                        state.score,
+                        state.lives,
+                        NaraSaysGame::Prompt(state.expected));
+                    return std::string(status);
+                }
+
+                return std::unexpected(
+                    "op must be notify, network_test, game_start, "
+                    "game_stop, or game_status");
+            });
+    }
+
+
     void InitializeOfflineTools() {
         McpServer::GetInstance().AddTool(
             "self.offline.utility",
@@ -1522,6 +1764,10 @@ private:
                     self->PollTouch(now_ms);
                     self->PollBatteryPolicy(now_ms);
                     self->PollOfflineUtilities(now_ms);
+                    if (self->nara_says_.snapshot().active) {
+                        self->HandleNaraSaysEvent(
+                            self->nara_says_.Tick(now_ms));
+                    }
                     vTaskDelay(pdMS_TO_TICKS(20));
                 }
             },
@@ -1721,6 +1967,7 @@ public:
         InitializeButtons();
         InitializeReactionTools();
         InitializeOfflineTools();
+        InitializeCompanionTools();
         InitializeOfflineCapsule();
         InitializeOfflineCapsuleTools();
         GetBacklight()->RestoreBrightness();
