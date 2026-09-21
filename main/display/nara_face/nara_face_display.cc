@@ -217,8 +217,7 @@ bool NaraFaceDisplay::ShowQrCode(
     config.qrcode_ecc_level = ESP_QRCODE_ECC_MED;
     config.display_func = [](esp_qrcode_handle_t handle) {
         if (g_qr_target != nullptr) {
-            g_qr_target->RenderQrCode(
-                const_cast<uint8_t*>(handle));
+            g_qr_target->RenderQrCode(handle);
         }
     };
 
@@ -239,9 +238,8 @@ bool NaraFaceDisplay::ShowQrCode(
     return true;
 }
 
-void NaraFaceDisplay::RenderQrCode(void* raw_handle) {
-    auto handle =
-        static_cast<esp_qrcode_handle_t>(raw_handle);
+void NaraFaceDisplay::RenderQrCode(
+    esp_qrcode_handle_t handle) {
     const int modules = esp_qrcode_get_size(handle);
     if (modules <= 0) return;
 
