@@ -13,12 +13,14 @@
 #include <functional>
 #include <cstdint>
 #include <vector>
+#include <atomic>
 
 #include "protocol.h"
 #include "ota.h"
 #include "audio_service.h"
 #include "device_state.h"
 #include "device_state_machine.h"
+#include "connectivity_state.h"
 #include "notify/notify_player.h"
 
 // Main event bits
@@ -36,6 +38,7 @@
 #define MAIN_EVENT_STOP_LISTENING       (1 << 11)
 #define MAIN_EVENT_STATE_CHANGED        (1 << 12)
 #define MAIN_EVENT_PLAYBACK_DRAINED     (1 << 13)
+#define MAIN_EVENT_NETWORK_UNAVAILABLE   (1 << 14)
 
 
 enum AecMode {
@@ -69,6 +72,7 @@ public:
     void Run();
 
     DeviceState GetDeviceState() const { return state_machine_.GetState(); }
+    ConnectivityState GetConnectivityState() const { return connectivity_state_.load(); }
     bool IsVoiceDetected() const { return audio_service_.IsVoiceDetected(); }
     
     /**
@@ -136,6 +140,7 @@ private:
     EventGroupHandle_t event_group_ = nullptr;
     esp_timer_handle_t clock_timer_handle_ = nullptr;
     DeviceStateMachine state_machine_;
+    std::atomic<ConnectivityState> connectivity_state_{kConnectivityUnknown};
     ListeningMode listening_mode_ = kListeningModeAutoStop;
     AecMode aec_mode_ = kAecOff;
     std::string last_error_message_;
@@ -162,6 +167,7 @@ private:
     void HandleStopListeningEvent();
     void HandleNetworkConnectedEvent();
     void HandleNetworkDisconnectedEvent();
+    void HandleNetworkUnavailableEvent();
     void HandleActivationDoneEvent();
     void HandleWakeWordDetectedEvent();
     void ContinueOpenAudioChannel(ListeningMode mode);
