@@ -115,10 +115,11 @@ void Application::Initialize() {
 
         switch (event) {
             case NetworkEvent::Scanning:
+                connectivity_state_.store(kConnectivityConnecting);
                 display->ShowNotification(Lang::Strings::SCANNING_WIFI, 30000);
-                xEventGroupSetBits(event_group_, MAIN_EVENT_NETWORK_DISCONNECTED);
                 break;
             case NetworkEvent::Connecting: {
+                connectivity_state_.store(kConnectivityConnecting);
                 if (data.empty()) {
                     // Cellular network - registering without carrier info yet
                     display->SetStatus(Lang::Strings::REGISTERING_NETWORK);
@@ -132,6 +133,7 @@ void Application::Initialize() {
                 break;
             }
             case NetworkEvent::Connected: {
+                connectivity_state_.store(kConnectivityNetworkAvailable);
                 std::string msg = Lang::Strings::CONNECTED_TO;
                 msg += data;
                 display->ShowNotification(msg.c_str(), 30000);
@@ -139,12 +141,19 @@ void Application::Initialize() {
                 break;
             }
             case NetworkEvent::Disconnected:
+                connectivity_state_.store(kConnectivityNetworkUnavailable);
                 xEventGroupSetBits(event_group_, MAIN_EVENT_NETWORK_DISCONNECTED);
                 break;
+            case NetworkEvent::Unavailable:
+                connectivity_state_.store(kConnectivityNetworkUnavailable);
+                xEventGroupSetBits(event_group_, MAIN_EVENT_NETWORK_UNAVAILABLE);
+                break;
             case NetworkEvent::WifiConfigModeEnter:
+                connectivity_state_.store(kConnectivityProvisioning);
                 // WiFi config mode enter is handled by WifiBoard internally
                 break;
             case NetworkEvent::WifiConfigModeExit:
+                connectivity_state_.store(kConnectivityConnecting);
                 // WiFi config mode exit is handled by WifiBoard internally
                 break;
             // Cellular modem specific events
@@ -185,7 +194,7 @@ void Application::Run() {
         MAIN_EVENT_VAD_CHANGE | MAIN_EVENT_CLOCK_TICK | MAIN_EVENT_ERROR |
         MAIN_EVENT_NETWORK_CONNECTED | MAIN_EVENT_NETWORK_DISCONNECTED | MAIN_EVENT_TOGGLE_CHAT |
         MAIN_EVENT_START_LISTENING | MAIN_EVENT_STOP_LISTENING | MAIN_EVENT_ACTIVATION_DONE |
-        MAIN_EVENT_STATE_CHANGED | MAIN_EVENT_PLAYBACK_DRAINED;
+        MAIN_EVENT_STATE_CHANGED | MAIN_EVENT_PLAYBACK_DRAINED | MAIN_EVENT_NETWORK_UNAVAILABLE;
 
     while (true) {
         auto bits = xEventGroupWaitBits(event_group_, ALL_EVENTS, pdTRUE, pdFALSE, portMAX_DELAY);
@@ -195,8 +204,16 @@ void Application::Run() {
                 StopNotification();
             }
             SetDeviceState(kDeviceStateIdle);
-            Alert(Lang::Strings::ERROR, last_error_message_.c_str(), "cancel",
-                  Lang::Sounds::OGG_EXCLAMATION);
+
+            // Connectivity loss is a capability downgrade, not a fatal product
+            // error. Avoid repeatedly alarming while WifiStation retries saved
+            // networks in the background.
+            if (GetConnectivityState() == kConnectivityNetworkAvailable) {
+                Alert(Lang::Strings::ERROR, last_error_message_.c_str(), "cancel",
+                      Lang::Sounds::OGG_EXCLAMATION);
+            } else {
+                last_error_message_.clear();
+            }
         }
 
         if (bits & MAIN_EVENT_NETWORK_CONNECTED) {
@@ -205,6 +222,10 @@ void Application::Run() {
 
         if (bits & MAIN_EVENT_NETWORK_DISCONNECTED) {
             HandleNetworkDisconnectedEvent();
+        }
+
+        if (bits & MAIN_EVENT_NETWORK_UNAVAILABLE) {
+            HandleNetworkUnavailableEvent();
         }
 
         if (bits & MAIN_EVENT_ACTIVATION_DONE) {
@@ -293,8 +314,10 @@ void Application::HandleNetworkConnectedEvent() {
     ESP_LOGI(TAG, "Network connected");
     auto state = GetDeviceState();
 
-    if (state == kDeviceStateStarting || state == kDeviceStateWifiConfiguring) {
-        // Network is ready, start activation
+    if (state == kDeviceStateStarting || state == kDeviceStateWifiConfiguring ||
+        (state == kDeviceStateIdle && !protocol_)) {
+        // Network is ready (or has recovered from local/offline mode), start activation
+        last_error_message_.clear();
         SetDeviceState(kDeviceStateActivating);
         if (activation_task_handle_ != nullptr) {
             ESP_LOGW(TAG, "Activation task already running");
@@ -317,20 +340,45 @@ void Application::HandleNetworkConnectedEvent() {
 }
 
 void Application::HandleNetworkDisconnectedEvent() {
-    // Close current conversation when network disconnected
+    // Close the network-backed runtime while keeping local UI alive. WifiStation
+    // continues reconnecting saved networks in the background.
     auto state = GetDeviceState();
     if (state == kDeviceStateNotifying) {
         StopNotification();
-    }
-    if (state == kDeviceStateConnecting || state == kDeviceStateListening ||
-        state == kDeviceStateSpeaking) {
-        ESP_LOGI(TAG, "Closing audio channel due to network disconnection");
-        protocol_->CloseAudioChannel();
+        state = GetDeviceState();
     }
 
-    // Update the status bar immediately to show the network state
+    if (protocol_) {
+        if (protocol_->IsAudioChannelOpened()) {
+            ESP_LOGI(TAG, "Closing audio channel due to network disconnection");
+            protocol_->CloseAudioChannel();
+        }
+        protocol_.reset();
+    }
+
+    if (state == kDeviceStateConnecting || state == kDeviceStateListening ||
+        state == kDeviceStateSpeaking || state == kDeviceStateActivating) {
+        SetDeviceState(kDeviceStateIdle);
+    }
+
     auto display = Board::GetInstance().GetDisplay();
     display->UpdateStatusBar(true);
+}
+
+void Application::HandleNetworkUnavailableEvent() {
+    ESP_LOGI(TAG, "No saved network is reachable yet; entering useful local idle mode");
+
+    // A configured Nara must not fall back into first-use provisioning merely
+    // because the current router/hotspot is absent. The station keeps scanning
+    // in the background and HandleNetworkConnectedEvent() reactivates the
+    // gateway automatically when any saved network returns.
+    if (GetDeviceState() == kDeviceStateStarting) {
+        SetDeviceState(kDeviceStateIdle);
+    }
+
+    auto& board = Board::GetInstance();
+    board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+    board.GetDisplay()->UpdateStatusBar(true);
 }
 
 void Application::HandleActivationDoneEvent() {
@@ -1026,7 +1074,11 @@ void Application::HandleStateChangedEvent() {
                 display->SetInteraction("idle");
             }
             audio_service_.EnableVoiceProcessing(false);
-            audio_service_.EnableWakeWordDetection(true);
+            // Until local wake-word commands are implemented, do not burn
+            // resources detecting a wake word that cannot open a voice session.
+            audio_service_.EnableWakeWordDetection(
+                protocol_ != nullptr &&
+                GetConnectivityState() == kConnectivityNetworkAvailable);
             break;
         case kDeviceStateConnecting:
             display->SetStatus(Lang::Strings::CONNECTING);
