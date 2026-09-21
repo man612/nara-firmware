@@ -13,12 +13,15 @@
 #include <esp_efuse.h>
 #include <esp_efuse_table.h>
 #include <esp_heap_caps.h>
+#include <psa/crypto.h>
 #ifdef SOC_HMAC_SUPPORTED
 #include <esp_hmac.h>
 #endif
 
 #include <algorithm>
+#include <array>
 #include <charconv>
+#include <cctype>
 #include <cstring>
 #include <expected>
 #include <system_error>
@@ -69,6 +72,22 @@ std::unique_ptr<Http> Ota::SetupHttp() {
     http->SetHeader("User-Agent", user_agent);
     http->SetHeader("Accept-Language", Lang::CODE);
     http->SetHeader("Content-Type", "application/json");
+
+    // Reuse the device's gateway credential for OTA checks when available.
+    // This is optional so an unclaimed/first-boot device can still use a
+    // bootstrap endpoint, but claimed devices do not need a second long-lived
+    // secret just for version discovery.
+    Settings websocket_settings("websocket", false);
+    std::string device_token = websocket_settings.GetString("token");
+    if (device_token.empty()) {
+        device_token = CONFIG_NARA_GATEWAY_TOKEN;
+    }
+    if (!device_token.empty()) {
+        if (device_token.find(" ") == std::string::npos) {
+            device_token = "Bearer " + device_token;
+        }
+        http->SetHeader("Authorization", device_token);
+    }
 
     return http;
 }
@@ -216,6 +235,8 @@ NetworkResult<> Ota::CheckVersion() {
     }
 
     has_new_version_ = false;
+    firmware_sha256_.clear();
+    firmware_size_ = 0;
     cJSON *firmware = cJSON_GetObjectItem(root, "firmware");
     if (cJSON_IsObject(firmware)) {
         cJSON *version = cJSON_GetObjectItem(firmware, "version");
@@ -225,6 +246,35 @@ NetworkResult<> Ota::CheckVersion() {
         cJSON *url = cJSON_GetObjectItem(firmware, "url");
         if (cJSON_IsString(url)) {
             firmware_url_ = url->valuestring;
+        }
+
+        cJSON *sha256 = cJSON_GetObjectItem(firmware, "sha256");
+        if (cJSON_IsString(sha256)) {
+            std::string digest = sha256->valuestring;
+            const bool valid_digest =
+                digest.size() == 64 &&
+                std::all_of(digest.begin(), digest.end(), [](unsigned char ch) {
+                    return std::isxdigit(ch) != 0;
+                });
+            if (!valid_digest) {
+                ESP_LOGE(TAG, "OTA response contains an invalid SHA-256 digest");
+                cJSON_Delete(root);
+                return std::unexpected(NetworkError::ProtocolError());
+            }
+            std::transform(digest.begin(), digest.end(), digest.begin(),
+                           [](unsigned char ch) { return std::tolower(ch); });
+            firmware_sha256_ = std::move(digest);
+        }
+
+        cJSON *size = cJSON_GetObjectItem(firmware, "size");
+        if (cJSON_IsNumber(size)) {
+            if (size->valuedouble <= 0 ||
+                size->valuedouble > static_cast<double>(SIZE_MAX)) {
+                ESP_LOGE(TAG, "OTA response contains an invalid firmware size");
+                cJSON_Delete(root);
+                return std::unexpected(NetworkError::ProtocolError());
+            }
+            firmware_size_ = static_cast<size_t>(size->valuedouble);
         }
 
         if (cJSON_IsString(version) && cJSON_IsString(url)) {
@@ -269,7 +319,15 @@ void Ota::MarkCurrentVersionValid() {
     }
 }
 
-bool Ota::Upgrade(const std::string& firmware_url, std::function<void(int progress, size_t speed)> callback) {
+bool Ota::Upgrade(const std::string& firmware_url,
+                  std::function<void(int progress, size_t speed)> callback) {
+    return Upgrade(firmware_url, "", 0, std::move(callback));
+}
+
+bool Ota::Upgrade(const std::string& firmware_url,
+                  const std::string& expected_sha256,
+                  size_t expected_size,
+                  std::function<void(int progress, size_t speed)> callback) {
     ESP_LOGI(TAG, "Upgrading firmware from %s", firmware_url.c_str());
     esp_ota_handle_t update_handle = 0;
     auto update_partition = esp_ota_get_next_update_partition(NULL);
@@ -278,30 +336,73 @@ bool Ota::Upgrade(const std::string& firmware_url, std::function<void(int progre
         return false;
     }
 
-    ESP_LOGI(TAG, "Writing to partition %s at offset 0x%lx", update_partition->label, update_partition->address);
+    ESP_LOGI(TAG, "Writing to partition %s at offset 0x%lx", update_partition->label,
+             update_partition->address);
     bool image_header_checked = false;
     std::string image_header;
+
+    const bool verify_digest = !expected_sha256.empty();
+    psa_hash_operation_t hash_operation = PSA_HASH_OPERATION_INIT;
+    bool hash_active = false;
+    auto abort_hash = [&]() {
+        if (hash_active) {
+            psa_hash_abort(&hash_operation);
+            hash_active = false;
+        }
+    };
+
+    if (verify_digest) {
+        if (expected_sha256.size() != 64 ||
+            !std::all_of(expected_sha256.begin(), expected_sha256.end(),
+                         [](unsigned char ch) { return std::isxdigit(ch) != 0; })) {
+            ESP_LOGE(TAG, "Refusing OTA with malformed expected SHA-256");
+            return false;
+        }
+
+        if (psa_crypto_init() != PSA_SUCCESS ||
+            psa_hash_setup(&hash_operation, PSA_ALG_SHA_256) != PSA_SUCCESS) {
+            ESP_LOGE(TAG, "Failed to initialize SHA-256 verification");
+            abort_hash();
+            return false;
+        }
+        hash_active = true;
+    }
 
     auto network = Board::GetInstance().GetNetwork();
     auto http = network->CreateHttp(0);
     if (auto opened = http->Open("GET", firmware_url); !opened) {
         ESP_LOGE(TAG, "Failed to open HTTP connection: %s", opened.error().ToString().c_str());
+        abort_hash();
         return false;
     }
 
     auto status_code = http->GetStatusCode();
     if (!status_code) {
         ESP_LOGE(TAG, "Failed to read HTTP status: %s", status_code.error().ToString().c_str());
+        http->Close();
+        abort_hash();
         return false;
     }
     if (*status_code != 200) {
         ESP_LOGE(TAG, "Failed to get firmware, status code: %d", *status_code);
+        http->Close();
+        abort_hash();
         return false;
     }
 
     size_t content_length = http->GetBodyLength();
     if (content_length == 0) {
         ESP_LOGE(TAG, "Failed to get content length");
+        http->Close();
+        abort_hash();
+        return false;
+    }
+    if (expected_size != 0 && content_length != expected_size) {
+        ESP_LOGE(TAG, "Firmware size mismatch: expected %u bytes, got %u",
+                 static_cast<unsigned>(expected_size),
+                 static_cast<unsigned>(content_length));
+        http->Close();
+        abort_hash();
         return false;
     }
 
@@ -309,28 +410,54 @@ bool Ota::Upgrade(const std::string& firmware_url, std::function<void(int progre
     char* buffer = (char*)heap_caps_malloc(PAGE_SIZE, MALLOC_CAP_INTERNAL);
     if (buffer == nullptr) {
         ESP_LOGE(TAG, "Failed to allocate buffer");
+        http->Close();
+        abort_hash();
         return false;
     }
 
-    size_t buffer_offset = 0;  // Current data size in buffer
+    size_t buffer_offset = 0;
     size_t total_read = 0, recent_read = 0;
     auto last_calc_time = esp_timer_get_time();
     while (true) {
-        auto ret = http->Read(buffer + buffer_offset, PAGE_SIZE - buffer_offset);
+        const size_t read_offset = buffer_offset;
+        auto ret = http->Read(buffer + read_offset, PAGE_SIZE - read_offset);
         if (!ret) {
             ESP_LOGE(TAG, "Failed to read HTTP data: %s", ret.error().ToString().c_str());
+            if (update_handle != 0) {
+                esp_ota_abort(update_handle);
+            }
+            http->Close();
             heap_caps_free(buffer);
+            abort_hash();
             return false;
         }
         int n = *ret;
 
-        // Calculate speed and progress every second
+        if (n > 0 && hash_active) {
+            const auto hash_status = psa_hash_update(
+                &hash_operation,
+                reinterpret_cast<const uint8_t*>(buffer + read_offset),
+                static_cast<size_t>(n));
+            if (hash_status != PSA_SUCCESS) {
+                ESP_LOGE(TAG, "Failed to update firmware SHA-256: %d",
+                         static_cast<int>(hash_status));
+                if (update_handle != 0) {
+                    esp_ota_abort(update_handle);
+                }
+                http->Close();
+                heap_caps_free(buffer);
+                abort_hash();
+                return false;
+            }
+        }
+
         recent_read += n;
         total_read += n;
         buffer_offset += n;
         if (esp_timer_get_time() - last_calc_time >= 1000000 || n == 0) {
             size_t progress = total_read * 100 / content_length;
-            ESP_LOGI(TAG, "Progress: %u%% (%u/%u), Speed: %uB/s", progress, total_read, content_length, recent_read);
+            ESP_LOGI(TAG, "Progress: %u%% (%u/%u), Speed: %uB/s", progress, total_read,
+                     content_length, recent_read);
             if (callback) {
                 callback(progress, recent_read);
             }
@@ -339,15 +466,22 @@ bool Ota::Upgrade(const std::string& firmware_url, std::function<void(int progre
         }
 
         if (!image_header_checked) {
-            image_header.append(buffer, buffer_offset);
-            if (image_header.size() >= sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t) + sizeof(esp_app_desc_t)) {
+            image_header.append(buffer + read_offset, static_cast<size_t>(n));
+            if (image_header.size() >= sizeof(esp_image_header_t) +
+                                           sizeof(esp_image_segment_header_t) +
+                                           sizeof(esp_app_desc_t)) {
                 esp_app_desc_t new_app_info;
-                memcpy(&new_app_info, image_header.data() + sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t), sizeof(esp_app_desc_t));
+                memcpy(&new_app_info,
+                       image_header.data() + sizeof(esp_image_header_t) +
+                           sizeof(esp_image_segment_header_t),
+                       sizeof(esp_app_desc_t));
 
-                if (esp_ota_begin(update_partition, OTA_WITH_SEQUENTIAL_WRITES, &update_handle)) {
-                    esp_ota_abort(update_handle);
+                if (esp_ota_begin(update_partition, OTA_WITH_SEQUENTIAL_WRITES,
+                                  &update_handle)) {
                     ESP_LOGE(TAG, "Failed to begin OTA");
+                    http->Close();
                     heap_caps_free(buffer);
+                    abort_hash();
                     return false;
                 }
 
@@ -356,17 +490,24 @@ bool Ota::Upgrade(const std::string& firmware_url, std::function<void(int progre
             }
         }
 
-        // Write to flash when buffer is full (4KB) or it's the last chunk
         bool is_last_chunk = (n == 0);
         if (buffer_offset == PAGE_SIZE || (is_last_chunk && buffer_offset > 0)) {
+            if (update_handle == 0) {
+                ESP_LOGE(TAG, "Firmware image ended before a valid header was available");
+                http->Close();
+                heap_caps_free(buffer);
+                abort_hash();
+                return false;
+            }
             auto err = esp_ota_write(update_handle, buffer, buffer_offset);
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to write OTA data: %s", esp_err_to_name(err));
                 esp_ota_abort(update_handle);
+                http->Close();
                 heap_caps_free(buffer);
+                abort_hash();
                 return false;
             }
-
             buffer_offset = 0;
         }
 
@@ -376,6 +517,43 @@ bool Ota::Upgrade(const std::string& firmware_url, std::function<void(int progre
     }
     http->Close();
     heap_caps_free(buffer);
+
+    if (expected_size != 0 && total_read != expected_size) {
+        ESP_LOGE(TAG, "Downloaded firmware size mismatch after transfer");
+        esp_ota_abort(update_handle);
+        abort_hash();
+        return false;
+    }
+
+    if (hash_active) {
+        std::array<uint8_t, 32> digest{};
+        size_t digest_length = 0;
+        const auto status = psa_hash_finish(&hash_operation, digest.data(), digest.size(),
+                                            &digest_length);
+        hash_active = false;
+        if (status != PSA_SUCCESS || digest_length != digest.size()) {
+            ESP_LOGE(TAG, "Failed to finish firmware SHA-256: %d",
+                     static_cast<int>(status));
+            esp_ota_abort(update_handle);
+            return false;
+        }
+
+        char digest_hex[65] = {0};
+        for (size_t i = 0; i < digest.size(); ++i) {
+            snprintf(digest_hex + (i * 2), 3, "%02x", digest[i]);
+        }
+
+        std::string normalized_expected = expected_sha256;
+        std::transform(normalized_expected.begin(), normalized_expected.end(),
+                       normalized_expected.begin(),
+                       [](unsigned char ch) { return std::tolower(ch); });
+        if (normalized_expected != digest_hex) {
+            ESP_LOGE(TAG, "Firmware SHA-256 mismatch; refusing boot target");
+            esp_ota_abort(update_handle);
+            return false;
+        }
+        ESP_LOGI(TAG, "Firmware SHA-256 verified");
+    }
 
     esp_err_t err = esp_ota_end(update_handle);
     if (err != ESP_OK) {
@@ -398,7 +576,7 @@ bool Ota::Upgrade(const std::string& firmware_url, std::function<void(int progre
 }
 
 bool Ota::StartUpgrade(std::function<void(int progress, size_t speed)> callback) {
-    return Upgrade(firmware_url_, callback);
+    return Upgrade(firmware_url_, firmware_sha256_, firmware_size_, std::move(callback));
 }
 
 
