@@ -82,9 +82,12 @@ bool DeviceStateMachine::IsValidTransition(DeviceState from, DeviceState to) con
                    to == kDeviceStateWifiConfiguring;
 
         case kDeviceStateConnecting:
-            // Can go to idle (failed) or listening (success)
+            // Normal voice goes to listening. A queued remote text turn may
+            // receive TTS immediately after the channel opens, before the
+            // caller has returned from the connect path.
             return to == kDeviceStateIdle ||
-                   to == kDeviceStateListening;
+                   to == kDeviceStateListening ||
+                   to == kDeviceStateSpeaking;
 
         case kDeviceStateListening:
             // Can go to speaking or idle
