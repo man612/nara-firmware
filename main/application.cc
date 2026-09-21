@@ -297,6 +297,18 @@ void Application::Run() {
 
         if (bits & MAIN_EVENT_CLOCK_TICK) {
             clock_ticks_++;
+            if (
+                remote_voice_active_ &&
+                remote_voice_deadline_us_ > 0 &&
+                esp_timer_get_time() >= remote_voice_deadline_us_) {
+                ESP_LOGW(TAG, "Remote voice turn timed out; closing channel");
+                remote_voice_active_ = false;
+                remote_voice_deadline_us_ = 0;
+                if (protocol_ && protocol_->IsAudioChannelOpened()) {
+                    protocol_->CloseAudioChannel();
+                }
+                SetDeviceState(kDeviceStateIdle);
+            }
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
 
@@ -656,6 +668,7 @@ void Application::InitializeProtocol() {
         board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
         Schedule([this]() {
             remote_voice_active_ = false;
+            remote_voice_deadline_us_ = 0;
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
             SetDeviceState(kDeviceStateIdle);
@@ -717,6 +730,7 @@ void Application::InitializeProtocol() {
                     if (GetDeviceState() == kDeviceStateSpeaking) {
                         if (remote_voice_active_) {
                             remote_voice_active_ = false;
+                            remote_voice_deadline_us_ = 0;
                             if (protocol_ && protocol_->IsAudioChannelOpened()) {
                                 protocol_->CloseAudioChannel();
                             }
@@ -883,8 +897,11 @@ void Application::OpenRemoteVoiceChannel() {
         }
 
         remote_voice_active_ = true;
+        remote_voice_deadline_us_ =
+            esp_timer_get_time() + 90LL * 1000LL * 1000LL;
         if (!SetDeviceState(kDeviceStateConnecting)) {
             remote_voice_active_ = false;
+            remote_voice_deadline_us_ = 0;
             return;
         }
 
@@ -893,6 +910,7 @@ void Application::OpenRemoteVoiceChannel() {
 
         if (!protocol_->OpenAudioChannel()) {
             remote_voice_active_ = false;
+            remote_voice_deadline_us_ = 0;
             SetDeviceState(kDeviceStateIdle);
             return;
         }
