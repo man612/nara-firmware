@@ -47,6 +47,19 @@ Compile-time fallback:
 
 The legacy bootstrap/OTA endpoint is optional and empty by default.
 
+## OTA releases
+
+Firmware tags now produce release artifacts for the first Waveshare target:
+
+- `nara-waveshare-1.85b.ota.bin` — application image for A/B OTA;
+- `nara-waveshare-1.85b.factory.bin` — merged image for first flash/recovery;
+- `nara-waveshare-1.85b.manifest.json` — board/version/channel, download URL, SHA-256 and size;
+- `SHA256SUMS`.
+
+A tag without a prerelease suffix is a `stable` release. A tag containing `-` is published as GitHub prerelease/`beta`. Normal pushes still run CI but do not publish firmware to recipient devices.
+
+The firmware already has two OTA application slots and application rollback enabled. The Nara server-side OTA catalog remains responsible for deciding which channel/version a device should receive. Production devices should use HTTPS and signed firmware/Secure Boot hardening; signing keys must never be committed to this repository.
+
 ## Relationship to Nara
 
 The server runtime lives in `man612/nara`. It can route voice, reasoning, memory, search, and tools to different providers without reflashing the device.
