@@ -11,6 +11,7 @@ set(SOURCES "audio/audio_codec.cc"
             "offline/offline_capsule.cc"
             "games/nara_says_game.cc"
             "diagnostics/network_probe.cc"
+            "remote/remote_inbox_client.cc"
             "vision/vision_target_tracker.cc"
             "vision/sscma_i2c.cc"
             "audio/codecs/no_audio_codec.cc"
@@ -52,7 +53,7 @@ set(SOURCES "audio/audio_codec.cc"
             "main.cc"
             )
 
-set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols" "physical" "offline" "games" "diagnostics")
+set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols" "physical" "offline" "games" "diagnostics" "remote")
 
 # Add board common files
 list(APPEND SOURCES
