@@ -878,11 +878,13 @@ public:
 
     virtual bool GetBatteryLevel(int& level, bool& charging, bool& discharging) override {
         uint16_t soc = 0;
+        uint16_t voltage_mv = 0;
         uint16_t raw_current = 0;
         if (bq27220_ == nullptr ||
             !ReadWord(bq27220_, 0x2C, soc) ||
+            !ReadWord(bq27220_, 0x08, voltage_mv) ||
             !ReadWord(bq27220_, 0x0C, raw_current) ||
-            soc > 100) {
+            soc > 100 || voltage_mv < 2500 || voltage_mv > 4600) {
             return false;
         }
 
