@@ -7,6 +7,7 @@
 #include "power_save_timer.h"
 #include "physical/gesture_classifier.h"
 #include "settings.h"
+#include "assets/lang_config.h"
 
 #include <esp_log.h>
 #include <esp_timer.h>
