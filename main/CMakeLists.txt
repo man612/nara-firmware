@@ -418,6 +418,12 @@ elseif(CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85B)
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_16_4)
     set(BUILTIN_ICON_FONT font_material_symbols_16_4)
     set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
+    # Optional user-local Ogg reaction sounds. Hidden files are ignored by the
+    # asset builder, while .ogg files are gitignored so private sounds do not
+    # accidentally enter the public repository.
+    set(DEFAULT_ASSETS_EXTRA_FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/boards/waveshare/esp32-s3-touch-lcd-1.85b/reaction-assets"
+    )
     # Compile Nara's parametric face engine for the first physical target.
     # The renderer is not wired into the board UI yet; compiling it here keeps
     # the embedded and desktop implementations honest while integration lands.
