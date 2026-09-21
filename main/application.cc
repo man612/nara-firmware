@@ -414,19 +414,42 @@ void Application::HandleActivationDoneEvent() {
 }
 
 void Application::ActivationTask() {
-    // Create OTA object for activation process
+    // Activation is network-backed and may race with a router/hotspot
+    // disappearing. Treat connectivity loss as cancellation; reconnect will
+    // start a fresh activation from local idle.
+    auto network_is_available = [this]() {
+        return GetConnectivityState() == kConnectivityNetworkAvailable;
+    };
+
+    if (!network_is_available()) {
+        ESP_LOGI(TAG, "Skip activation because network is no longer available");
+        return;
+    }
+
     ota_ = std::make_unique<Ota>();
 
-    // Check for new assets version
     CheckAssetsVersion();
+    if (!network_is_available()) {
+        ESP_LOGI(TAG, "Cancel activation after asset step: network lost");
+        ota_.reset();
+        return;
+    }
 
-    // Check for new firmware version
     CheckNewVersion();
+    if (!network_is_available()) {
+        ESP_LOGI(TAG, "Cancel activation after version step: network lost");
+        ota_.reset();
+        return;
+    }
 
-    // Initialize the protocol
     InitializeProtocol();
+    if (!network_is_available()) {
+        ESP_LOGI(TAG, "Cancel activation after protocol setup: network lost");
+        ResetProtocol();
+        ota_.reset();
+        return;
+    }
 
-    // Signal completion to main loop
     xEventGroupSetBits(event_group_, MAIN_EVENT_ACTIVATION_DONE);
 }
 
@@ -502,6 +525,11 @@ void Application::CheckNewVersion() {
 
     auto& board = Board::GetInstance();
     while (true) {
+        if (GetConnectivityState() != kConnectivityNetworkAvailable) {
+            ESP_LOGI(TAG, "Stop version check retry because network is unavailable");
+            return;
+        }
+
         auto display = board.GetDisplay();
         display->SetStatus(Lang::Strings::CHECKING_NEW_VERSION);
 
