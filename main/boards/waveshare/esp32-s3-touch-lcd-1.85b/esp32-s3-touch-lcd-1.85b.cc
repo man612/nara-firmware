@@ -454,7 +454,7 @@ private:
     esp_lcd_panel_io_handle_t touch_io_ = nullptr;
     std::unique_ptr<NaraPcf85063Clock> rtc_;
     Button boot_button_;
-    Display* display_ = nullptr;
+    NaraFaceDisplay* display_ = nullptr;
     PowerSaveTimer* power_save_timer_ = nullptr;
     NaraGestureClassifier gesture_classifier_;
     NaraTouchClassifier touch_classifier_;
@@ -2001,6 +2001,32 @@ private:
                                       DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
     }
 
+#if CONFIG_ESP_WIFI_DPP_SUPPORT
+    void OnDppUriReady(const std::string& uri) override {
+        GetBacklight()->RestoreBrightness();
+        GetDisplay()->SetPowerSaveMode(false);
+        if (!display_->ShowQrCode(
+                uri,
+                "Scan with Wi-Fi Easy Connect")) {
+            GetDisplay()->ShowNotification(
+                "DPP QR generation failed. Hold BOOT to retry.",
+                7000);
+        }
+    }
+
+    void OnDppConfigFinished(bool success) override {
+        display_->HideQrCode();
+        if (success) {
+            GetDisplay()->SetEmotion("happy");
+            GetDisplay()->ShowNotification(
+                "Wi-Fi saved securely.",
+                3500);
+        } else {
+            GetDisplay()->SetEmotion("sad");
+        }
+    }
+#endif
+
     void InitializeButtons() {
         boot_button_.OnClick([this]() {
             auto& app = Application::GetInstance();
@@ -2016,8 +2042,15 @@ private:
         // hatch: hold BOOT for ~3 seconds to reopen Wi-Fi setup/recovery.
         boot_button_.OnLongPress([this]() {
             auto state = Application::GetInstance().GetDeviceState();
-            if (state == kDeviceStateIdle || state == kDeviceStateStarting) {
+            if (
+                state == kDeviceStateIdle ||
+                state == kDeviceStateStarting ||
+                state == kDeviceStateWifiConfiguring) {
+#if CONFIG_ESP_WIFI_DPP_SUPPORT
+                EnterDppConfigMode();
+#else
                 EnterWifiConfigMode();
+#endif
             }
         });
 #if CONFIG_USE_DEVICE_AEC
