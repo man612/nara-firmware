@@ -141,6 +141,36 @@ void McpServer::AddUserOnlyTools() {
                         return true;
                     });
 
+    // Asset/reaction pack installation is intentionally user-only. The AI
+    // never receives a generic remote-file installation tool.
+    AddUserOnlyTool(
+        "self.assets.install_pack",
+        "Install a complete signed/trusted Nara asset pack from an HTTPS URL on next boot. "
+        "Use this from an authenticated admin surface, not from the conversational AI.",
+        PropertyList({Property("url", kPropertyTypeString).SetMaxLength(512)}),
+        [this](const PropertyList& properties) -> ToolResult {
+            const auto url = properties["url"].value<std::string>();
+            if (url.rfind("https://", 0) != 0) {
+                return std::unexpected("asset pack URL must use HTTPS");
+            }
+            if (url.find_first_of("\r\n") != std::string::npos) {
+                return std::unexpected("asset pack URL contains invalid characters");
+            }
+
+            {
+                Settings settings("assets", true);
+                settings.SetString("download_url", url);
+            }
+
+            auto& app = Application::GetInstance();
+            app.Schedule([&app]() {
+                ESP_LOGI(TAG, "Rebooting to install queued asset pack");
+                vTaskDelay(pdMS_TO_TICKS(500));
+                app.Reboot();
+            });
+            return true;
+        });
+
     // Firmware upgrade
     AddUserOnlyTool(
         "self.upgrade_firmware",
