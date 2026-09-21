@@ -12,6 +12,7 @@
 #include "assets/lang_config.h"
 
 #include <esp_log.h>
+#include <optional>
 #include <esp_timer.h>
 #include <driver/i2c_master.h>
 #include <driver/spi_master.h>
