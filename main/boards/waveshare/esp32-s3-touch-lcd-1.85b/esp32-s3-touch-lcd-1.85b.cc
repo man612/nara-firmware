@@ -1064,13 +1064,13 @@ public:
         InitializeCodecI2c();
         InitializePhysicalSensors();
         InitializeBatteryGauge();
-        InitializeOptionalVision();
         st77916_reset();
         InitializeSpi();
         Initializest77916Display();
         InitializeButtons();
         InitializeReactionTools();
         GetBacklight()->RestoreBrightness();
+        InitializeOptionalVision();
         StartPhysicalReflexTask();
     }
 
