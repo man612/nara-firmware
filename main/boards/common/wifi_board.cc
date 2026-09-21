@@ -190,6 +190,10 @@ void WifiBoard::OnDppUriReady(const std::string& uri) {
         6000);
 }
 
+void WifiBoard::OnDppConfigFinished(bool success) {
+    (void)success;
+}
+
 void WifiBoard::StartDppConfigMode() {
     if (dpp_commissioner_ && dpp_commissioner_->active()) {
         return;
@@ -222,6 +226,7 @@ void WifiBoard::StartDppConfigMode() {
                                 ESP_LOGI(
                                     TAG,
                                     "DPP commissioning completed");
+                                OnDppConfigFinished(true);
                                 in_config_mode_ = false;
                                 OnNetworkEvent(
                                     NetworkEvent::WifiConfigModeExit);
@@ -234,6 +239,7 @@ void WifiBoard::StartDppConfigMode() {
                                     TAG,
                                     "DPP commissioning failed: %s",
                                     error.c_str());
+                                OnDppConfigFinished(false);
                                 in_config_mode_ = false;
                                 Application::GetInstance().SetDeviceState(
                                     kDeviceStateIdle);
@@ -251,6 +257,7 @@ void WifiBoard::StartDppConfigMode() {
     const std::string info =
         settings.GetString("dpp_info", "Nara");
     if (!dpp_commissioner_->Start(channels, info)) {
+        OnDppConfigFinished(false);
         in_config_mode_ = false;
         Application::GetInstance().SetDeviceState(
             kDeviceStateIdle);
