@@ -585,6 +585,16 @@ private:
             }
             app.ToggleChatState();
         });
+
+        // A configured device no longer falls into provisioning just because
+        // known Wi-Fi is temporarily absent. Keep a deliberate physical escape
+        // hatch: hold BOOT for ~3 seconds to reopen Wi-Fi setup/recovery.
+        boot_button_.OnLongPress([this]() {
+            auto state = Application::GetInstance().GetDeviceState();
+            if (state == kDeviceStateIdle || state == kDeviceStateStarting) {
+                EnterWifiConfigMode();
+            }
+        });
 #if CONFIG_USE_DEVICE_AEC
         boot_button_.OnDoubleClick([this]() {
             auto& app = Application::GetInstance();
@@ -597,7 +607,7 @@ private:
 
 
 public:
-    WaveshareEsp32s3TouchLcd1_85B() : boot_button_(BOOT_BUTTON_GPIO) {
+    WaveshareEsp32s3TouchLcd1_85B() : boot_button_(BOOT_BUTTON_GPIO, false, 3000) {
         InitializePowerSaveTimer();
         InitializeCodecI2c();
         st77916_reset();
