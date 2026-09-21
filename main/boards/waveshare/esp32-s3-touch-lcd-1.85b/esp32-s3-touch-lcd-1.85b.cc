@@ -1785,11 +1785,11 @@ private:
                                 const std::string id = item.id;
                                 const std::string text = item.text;
                                 const std::string emotion =
-                                    IsValidEmotion(item.emotion)
+                                    self->IsValidEmotion(item.emotion)
                                         ? item.emotion
                                         : "neutral";
                                 const std::string sound =
-                                    IsValidSoundSpec(item.sound)
+                                    self->IsValidSoundSpec(item.sound)
                                         ? item.sound
                                         : "none";
                                 app.Schedule(
