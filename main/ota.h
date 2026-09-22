@@ -30,7 +30,7 @@ public:
                         const std::string& expected_sha256,
                         size_t expected_size,
                         std::function<void(int progress, size_t speed)> callback);
-    void MarkCurrentVersionValid();
+    static void MarkCurrentVersionValid();
 
     const std::string& GetFirmwareVersion() const { return firmware_version_; }
     const std::string& GetCurrentVersion() const { return current_version_; }

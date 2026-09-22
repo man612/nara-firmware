@@ -15,8 +15,8 @@ jobs:
   host-checks:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - name: Run build-script tests
@@ -25,12 +25,16 @@ jobs:
         run: |
           python scripts/build.py --list-boards > boards.txt
           grep -F "waveshare/esp32-s3-touch-lcd-1.85b" boards.txt
+      - name: Verify production dependency lock
+        run: |
+          test -f dependencies.lock.esp32s3
+          grep -F "target: esp32s3" dependencies.lock.esp32s3
 
   face-simulator:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install desktop simulator dependencies
         run: sudo apt-get update && sudo apt-get install -y libsdl2-dev ninja-build xvfb
       - name: Configure
@@ -58,12 +62,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
 
       - name: Compile Waveshare ESP32-S3-Touch-LCD-1.85B
-        uses: espressif/esp-idf-ci-action@v1
+        uses: espressif/esp-idf-ci-action@9d38657f3d789ca759b2b37aaf5ceffbc42c4f0d # v1
         with:
           esp_idf_version: v6.0.2
           target: esp32s3
@@ -73,8 +77,20 @@ jobs:
             waveshare/esp32-s3-touch-lcd-1.85b
             --name esp32-s3-touch-lcd-1.85b
 
+      - name: Verify dependency lock did not drift
+        run: git diff --exit-code -- dependencies.lock.esp32s3
+
+      - name: Verify production boot safety flags
+        shell: bash
+        run: |
+          if grep -q '^CONFIG_BOOTLOADER_SKIP_VALIDATE_ALWAYS=y$' sdkconfig; then
+            echo "Unsafe bootloader skip-validation flag is enabled" >&2
+            exit 1
+          fi
+          grep -q '^CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y$' sdkconfig
+
       - name: Upload firmware artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: nara-waveshare-1.85b-${{ github.sha }}
           if-no-files-found: error
@@ -84,4 +100,4 @@ jobs:
             build/**/*.bin
             build/flasher_args.json
             sdkconfig
-            dependencies.lock
+            dependencies.lock.esp32s3
