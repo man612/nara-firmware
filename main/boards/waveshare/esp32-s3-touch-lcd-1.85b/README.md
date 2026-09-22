@@ -3,9 +3,10 @@
 This is Nara Firmware's first physical target.
 
 Current Nara-specific functionality on this board includes the parametric face,
-local audio-driven mouth activity, saved-network recovery, QMI8658 physical
-reflexes, persistent gesture reaction configuration, custom reaction sounds,
-BQ27220 battery policy and optional external SSCMA local-vision gaze.
+local audio-driven mouth activity, saved-network recovery, DPP QR Wi-Fi
+commissioning with a deliberate fallback path, QMI8658 physical reflexes,
+persistent gesture reaction configuration, custom reaction sounds, BQ27220
+battery policy and optional external SSCMA local-vision gaze.
 
 The base board has **no onboard camera**. See `VISION.md` for the optional
 external local-vision route.
