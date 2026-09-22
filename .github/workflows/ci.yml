@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   host-checks:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -27,7 +27,7 @@ jobs:
           grep -F "waveshare/esp32-s3-touch-lcd-1.85b" boards.txt
 
   face-simulator:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -55,7 +55,7 @@ jobs:
           exit 1
 
   waveshare-1-85b-build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
