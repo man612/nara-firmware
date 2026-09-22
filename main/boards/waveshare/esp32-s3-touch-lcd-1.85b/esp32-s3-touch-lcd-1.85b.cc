@@ -2007,7 +2007,7 @@ private:
         GetDisplay()->SetPowerSaveMode(false);
         if (!display_->ShowQrCode(
                 uri,
-                "Scan with Wi-Fi Easy Connect")) {
+                "Easy Connect - click BOOT for fallback")) {
             GetDisplay()->ShowNotification(
                 "DPP QR generation failed. Hold BOOT to retry.",
                 7000);
@@ -2030,10 +2030,23 @@ private:
     void InitializeButtons() {
         boot_button_.OnClick([this]() {
             auto& app = Application::GetInstance();
-            if (app.GetDeviceState() == kDeviceStateStarting) {
+            const auto state = app.GetDeviceState();
+            if (state == kDeviceStateStarting) {
                 EnterWifiConfigMode();
                 return;
             }
+#if CONFIG_ESP_WIFI_DPP_SUPPORT
+            // DPP is preferred but not universally supported by phones.
+            // A deliberate click while the DPP/failure screen is visible
+            // switches to the inherited fallback provisioning path; a long
+            // press remains the explicit DPP retry path below.
+            if (
+                state == kDeviceStateWifiConfiguring &&
+                !IsInWifiConfigMode()) {
+                EnterWifiConfigMode();
+                return;
+            }
+#endif
             app.ToggleChatState();
         });
 
