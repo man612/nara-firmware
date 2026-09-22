@@ -106,7 +106,9 @@ Implemented software includes:
 - persistent local timer and daily-alarm foundations;
 - saved-Wi-Fi retry/recovery and useful local idle when known networks are
   temporarily unavailable;
-- deliberate BOOT long-press entry into Wi-Fi recovery/configuration;
+- ESP-IDF Wi-Fi Easy Connect / DPP QR commissioning on the first target;
+- BOOT long-press for DPP commissioning/retry plus an explicit BOOT-click
+  fallback for phones that do not support DPP;
 - custom Ogg reaction sounds from the separate assets partition;
 - user/admin-only complete asset-pack installation over HTTPS;
 - BQ27220 battery-level reading and automatic low/critical battery behavior;

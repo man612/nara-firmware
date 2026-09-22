@@ -8,12 +8,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   host-checks:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Run build-script tests
@@ -24,10 +27,10 @@ jobs:
           grep -F "waveshare/esp32-s3-touch-lcd-1.85b" boards.txt
 
   face-simulator:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install desktop simulator dependencies
         run: sudo apt-get update && sudo apt-get install -y libsdl2-dev ninja-build xvfb
       - name: Configure
@@ -52,10 +55,10 @@ jobs:
           exit 1
 
   waveshare-1-85b-build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -71,7 +74,7 @@ jobs:
             --name esp32-s3-touch-lcd-1.85b
 
       - name: Upload firmware artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: nara-waveshare-1.85b-${{ github.sha }}
           if-no-files-found: error
