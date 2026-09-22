@@ -1095,11 +1095,6 @@ if(CONFIG_IDF_TARGET_ESP32S3)
 endif()
 
 set(MAIN_PRIV_REQUIRES_EXTRA "")
-if(CONFIG_ESP_WIFI_DPP_SUPPORT)
-    list(APPEND MAIN_PRIV_REQUIRES_EXTRA
-        wpa_supplicant
-    )
-endif()
 if(BOARD_TYPE STREQUAL "m5stack-stick-s3")
     list(APPEND MAIN_PRIV_REQUIRES_EXTRA
         m5stack__m5pm1
@@ -1146,6 +1141,7 @@ idf_component_register(SRCS ${SOURCES}
                         mbedtls
                         console
                         efuse
+                        wpa_supplicant
                         bt
                         fatfs
                         xiaozhi-fonts
