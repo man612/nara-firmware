@@ -2,10 +2,13 @@
 #include "../lvgl_display/lvgl_theme.h"
 
 #include <cstring>
+#include <algorithm>
 #include <esp_random.h>
+#include <qrcode.h>
 
 namespace {
 constexpr uint32_t kFaceFramePeriodMs = 33;
+NaraFaceDisplay* g_qr_target = nullptr;
 
 bool ParseEmotion(const char* value, NaraEmotion& emotion) {
     if (value == nullptr) return false;
@@ -55,6 +58,7 @@ NaraFaceDisplay::NaraFaceDisplay(
       controller_(esp_random()) {}
 
 NaraFaceDisplay::~NaraFaceDisplay() {
+    HideQrCode();
     DisplayLockGuard lock(this);
     if (face_timer_ != nullptr) {
         lv_timer_delete(face_timer_);
@@ -195,6 +199,140 @@ void NaraFaceDisplay::SetGazeTarget(float x, float y) {
 void NaraFaceDisplay::ClearGazeTarget() {
     std::lock_guard<std::mutex> lock(face_mutex_);
     controller_.ClearManualGaze();
+}
+
+bool NaraFaceDisplay::ShowQrCode(
+    const std::string& payload,
+    const std::string& caption) {
+    if (payload.empty()) return false;
+
+    std::lock_guard<std::mutex> qr_lock(qr_mutex_);
+    if (g_qr_target != nullptr) {
+        return false;
+    }
+
+    g_qr_target = this;
+    esp_qrcode_config_t config = ESP_QRCODE_CONFIG_DEFAULT();
+    config.max_qrcode_version = 15;
+    config.qrcode_ecc_level = ESP_QRCODE_ECC_MED;
+    config.display_func = [](esp_qrcode_handle_t handle) {
+        if (g_qr_target != nullptr) {
+            g_qr_target->RenderQrCode(handle);
+        }
+    };
+
+    const esp_err_t result =
+        esp_qrcode_generate(&config, payload.c_str());
+    g_qr_target = nullptr;
+    if (result != ESP_OK) {
+        HideQrCode();
+        return false;
+    }
+
+    if (!caption.empty()) {
+        DisplayLockGuard lock(this);
+        if (lock && qr_caption_ != nullptr) {
+            lv_label_set_text(qr_caption_, caption.c_str());
+        }
+    }
+    return true;
+}
+
+void NaraFaceDisplay::RenderQrCode(
+    esp_qrcode_handle_t handle) {
+    const int modules = esp_qrcode_get_size(handle);
+    if (modules <= 0) return;
+
+    constexpr int quiet = 4;
+    const int available = std::max(
+        64, std::min(width_ - 24, height_ - 72));
+    const int scale = std::max(
+        1, available / (modules + quiet * 2));
+    const int side = (modules + quiet * 2) * scale;
+
+    DisplayLockGuard lock(this);
+    if (!lock || emoji_box_ == nullptr) return;
+
+    if (face_view_ != nullptr) {
+        face_view_->SetVisible(false);
+    }
+    if (qr_overlay_ != nullptr) {
+        lv_obj_delete(qr_overlay_);
+        qr_overlay_ = nullptr;
+        qr_canvas_ = nullptr;
+        qr_caption_ = nullptr;
+        qr_buffer_.clear();
+    }
+
+    qr_overlay_ = lv_obj_create(emoji_box_);
+    lv_obj_remove_style_all(qr_overlay_);
+    lv_obj_set_size(qr_overlay_, width_, height_);
+    lv_obj_set_style_bg_color(
+        qr_overlay_, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(qr_overlay_, LV_OPA_COVER, 0);
+    lv_obj_align(qr_overlay_, LV_ALIGN_CENTER, 0, 0);
+
+    qr_canvas_ = lv_canvas_create(qr_overlay_);
+    qr_buffer_.assign(
+        static_cast<size_t>(side) *
+            static_cast<size_t>(side),
+        0xffff);
+    lv_canvas_set_buffer(
+        qr_canvas_,
+        qr_buffer_.data(),
+        side,
+        side,
+        LV_COLOR_FORMAT_RGB565);
+    lv_canvas_fill_bg(
+        qr_canvas_, lv_color_white(), LV_OPA_COVER);
+    lv_obj_align(qr_canvas_, LV_ALIGN_CENTER, 0, -18);
+
+    for (int y = 0; y < modules; ++y) {
+        for (int x = 0; x < modules; ++x) {
+            if (!esp_qrcode_get_module(handle, x, y)) {
+                continue;
+            }
+            const int px0 = (x + quiet) * scale;
+            const int py0 = (y + quiet) * scale;
+            for (int py = 0; py < scale; ++py) {
+                for (int px = 0; px < scale; ++px) {
+                    lv_canvas_set_px(
+                        qr_canvas_,
+                        px0 + px,
+                        py0 + py,
+                        lv_color_black(),
+                        LV_OPA_COVER);
+                }
+            }
+        }
+    }
+
+    qr_caption_ = lv_label_create(qr_overlay_);
+    lv_label_set_long_mode(
+        qr_caption_, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(qr_caption_, width_ - 28);
+    lv_obj_set_style_text_align(
+        qr_caption_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(
+        qr_caption_, lv_color_black(), 0);
+    lv_obj_align(
+        qr_caption_, LV_ALIGN_BOTTOM_MID, 0, -10);
+    lv_label_set_text(qr_caption_, "Scan to connect Nara");
+}
+
+void NaraFaceDisplay::HideQrCode() {
+    DisplayLockGuard lock(this);
+    if (!lock) return;
+    if (qr_overlay_ != nullptr) {
+        lv_obj_delete(qr_overlay_);
+        qr_overlay_ = nullptr;
+        qr_canvas_ = nullptr;
+        qr_caption_ = nullptr;
+        qr_buffer_.clear();
+    }
+    if (face_view_ != nullptr) {
+        face_view_->SetVisible(true);
+    }
 }
 
 void NaraFaceDisplay::SetPowerSaveMode(bool on) {

@@ -6,6 +6,9 @@
 
 #include <memory>
 #include <mutex>
+#include <string>
+#include <vector>
+#include <qrcode.h>
 
 class NaraFaceDisplay : public SpiLcdDisplay {
 public:
@@ -22,12 +25,23 @@ public:
     void ClearGazeTarget() override;
     void SetPowerSaveMode(bool on) override;
 
+    bool ShowQrCode(
+        const std::string& payload,
+        const std::string& caption = "");
+    void HideQrCode();
+
 private:
     std::mutex face_mutex_;
     NaraFaceController controller_;
     std::unique_ptr<NaraFaceView> face_view_;
     lv_timer_t* face_timer_ = nullptr;
+    lv_obj_t* qr_overlay_ = nullptr;
+    lv_obj_t* qr_canvas_ = nullptr;
+    lv_obj_t* qr_caption_ = nullptr;
+    std::vector<uint16_t> qr_buffer_;
+    std::mutex qr_mutex_;
 
+    void RenderQrCode(esp_qrcode_handle_t handle);
     void RenderFace(uint32_t now_ms);
     void ShowFace();
     void ShowLegacyEmotion(const char* emotion);

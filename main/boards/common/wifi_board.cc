@@ -107,10 +107,15 @@ void WifiBoard::TryWifiConnect() {
         esp_timer_start_once(connect_timer_, CONNECT_TIMEOUT_SEC * 1000000ULL);
         WifiManager::GetInstance().StartStation();
     } else {
-        // No SSID configured, enter config mode
-        // Wait for the board version to be shown
+        // First use should prefer a secure standardized QR path on targets
+        // that support DPP rather than immediately exposing the inherited
+        // open/plain-HTTP setup AP.
         vTaskDelay(pdMS_TO_TICKS(1500));
+#if CONFIG_ESP_WIFI_DPP_SUPPORT
+        StartDppConfigMode();
+#else
         StartWifiConfigMode();
+#endif
     }
 }
 
@@ -174,6 +179,135 @@ void WifiBoard::OnWifiConnectTimeout(void* arg) {
     board->OnNetworkEvent(NetworkEvent::Unavailable);
 }
 
+#if CONFIG_ESP_WIFI_DPP_SUPPORT
+void WifiBoard::OnDppUriReady(const std::string& uri) {
+    ESP_LOGI(TAG, "DPP URI ready (%u bytes)",
+             static_cast<unsigned>(uri.size()));
+    Application::GetInstance().GetAudioService().PlaySound(
+        Lang::Sounds::OGG_WIFICONFIG);
+    GetDisplay()->ShowNotification(
+        "Scan the Wi-Fi Easy Connect QR shown by this Nara target.",
+        6000);
+}
+
+void WifiBoard::OnDppConfigFinished(bool success) {
+    (void)success;
+}
+
+void WifiBoard::StartDppConfigMode() {
+    if (dpp_commissioner_ && dpp_commissioner_->active()) {
+        return;
+    }
+
+    auto& manager = WifiManager::GetInstance();
+    if (manager.IsConfigMode()) {
+        manager.StopConfigAp();
+    }
+    manager.StopStation();
+
+    Application::GetInstance().SetDeviceState(
+        kDeviceStateWifiConfiguring);
+    in_config_mode_ = true;
+    OnNetworkEvent(NetworkEvent::WifiConfigModeEnter);
+
+    if (!dpp_commissioner_) {
+        dpp_commissioner_ =
+            std::make_unique<NaraDppCommissioner>(
+                NaraDppCommissioner::Callbacks{
+                    .on_uri = [this](const std::string& uri) {
+                        Application::GetInstance().Schedule(
+                            [this, uri]() {
+                                OnDppUriReady(uri);
+                            });
+                    },
+                    .on_success = [this]() {
+                        Application::GetInstance().Schedule(
+                            [this]() {
+                                ESP_LOGI(
+                                    TAG,
+                                    "DPP commissioning completed");
+                                OnDppConfigFinished(true);
+                                in_config_mode_ = false;
+                                OnNetworkEvent(
+                                    NetworkEvent::WifiConfigModeExit);
+                            });
+                    },
+                    .on_error = [this](const std::string& error) {
+                        Application::GetInstance().Schedule(
+                            [this, error]() {
+                                ESP_LOGE(
+                                    TAG,
+                                    "DPP commissioning failed: %s",
+                                    error.c_str());
+                                OnDppConfigFinished(false);
+                                in_config_mode_ = false;
+                                // Stay in the visible configuring state so the
+                                // board can offer an explicit user-driven
+                                // fallback without automatically downgrading
+                                // from DPP after an authentication failure.
+                                Application::GetInstance().SetDeviceState(
+                                    kDeviceStateWifiConfiguring);
+                                GetDisplay()->ShowNotification(
+                                    "QR setup failed. Click BOOT for fallback; hold BOOT to retry.",
+                                    8000);
+                            });
+                    },
+                });
+    }
+
+    Settings settings("provisioning", false);
+    const std::string channels =
+        settings.GetString("dpp_channels", "6");
+    const std::string info =
+        settings.GetString("dpp_info", "Nara");
+    if (!dpp_commissioner_->Start(channels, info)) {
+        OnDppConfigFinished(false);
+        in_config_mode_ = false;
+        Application::GetInstance().SetDeviceState(
+            kDeviceStateWifiConfiguring);
+        GetDisplay()->ShowNotification(
+            "QR setup unavailable. Click BOOT for fallback; hold BOOT to retry.",
+            8000);
+    }
+}
+
+void WifiBoard::EnterDppConfigMode() {
+    ESP_LOGI(TAG, "EnterDppConfigMode called");
+    auto& app = Application::GetInstance();
+    const auto state = app.GetDeviceState();
+
+    if (
+        state != kDeviceStateStarting &&
+        state != kDeviceStateIdle &&
+        state != kDeviceStateWifiConfiguring) {
+        ESP_LOGW(
+            TAG,
+            "DPP request ignored in device state %d",
+            static_cast<int>(state));
+        return;
+    }
+
+    app.ResetProtocol();
+    xTaskCreate(
+        [](void* arg) {
+            auto* board = static_cast<WifiBoard*>(arg);
+            vTaskDelay(pdMS_TO_TICKS(250));
+            board->StartDppConfigMode();
+            vTaskDelete(nullptr);
+        },
+        "nara_dpp_start",
+        4096,
+        this,
+        2,
+        nullptr);
+}
+
+bool WifiBoard::IsDppConfigMode() const {
+    return dpp_commissioner_ &&
+           dpp_commissioner_->active();
+}
+#endif
+
 void WifiBoard::StartWifiConfigMode() {
     in_config_mode_ = true;
     // Transition to wifi configuring state
@@ -206,8 +340,20 @@ void WifiBoard::EnterWifiConfigMode() {
     auto& app = Application::GetInstance();
     auto state = app.GetDeviceState();
 
+#if CONFIG_ESP_WIFI_DPP_SUPPORT
+    const bool switching_from_dpp =
+        state == kDeviceStateWifiConfiguring &&
+        !WifiManager::GetInstance().IsConfigMode();
+    if (switching_from_dpp && dpp_commissioner_) {
+        dpp_commissioner_->Cancel();
+    }
+#else
+    const bool switching_from_dpp = false;
+#endif
+
     if (state == kDeviceStateSpeaking || state == kDeviceStateNotifying ||
-        state == kDeviceStateListening || state == kDeviceStateIdle) {
+        state == kDeviceStateListening || state == kDeviceStateIdle ||
+        switching_from_dpp) {
         // Reset protocol (close audio channel, reset protocol)
         Application::GetInstance().ResetProtocol();
 
@@ -230,7 +376,7 @@ void WifiBoard::EnterWifiConfigMode() {
     }
 
     if (state != kDeviceStateStarting) {
-        ESP_LOGE(TAG, "EnterWifiConfigMode called but device state is not starting or speaking, device state: %d", state);
+        ESP_LOGE(TAG, "EnterWifiConfigMode called but device state is not starting or eligible for config transition, device state: %d", state);
         return;
     }
 

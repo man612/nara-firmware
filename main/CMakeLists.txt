@@ -53,7 +53,11 @@ set(SOURCES "audio/audio_codec.cc"
             "main.cc"
             )
 
-set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols" "physical" "offline" "games" "diagnostics" "remote")
+set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols" "physical" "offline" "games" "diagnostics" "remote" "provisioning")
+
+if(CONFIG_ESP_WIFI_DPP_SUPPORT)
+    list(APPEND SOURCES "provisioning/dpp_commissioner.cc")
+endif()
 
 # Add board common files
 list(APPEND SOURCES
@@ -1137,6 +1141,7 @@ idf_component_register(SRCS ${SOURCES}
                         mbedtls
                         console
                         efuse
+                        wpa_supplicant
                         bt
                         fatfs
                         xiaozhi-fonts
