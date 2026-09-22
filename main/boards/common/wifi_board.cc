@@ -241,11 +241,15 @@ void WifiBoard::StartDppConfigMode() {
                                     error.c_str());
                                 OnDppConfigFinished(false);
                                 in_config_mode_ = false;
+                                // Stay in the visible configuring state so the
+                                // board can offer an explicit user-driven
+                                // fallback without automatically downgrading
+                                // from DPP after an authentication failure.
                                 Application::GetInstance().SetDeviceState(
-                                    kDeviceStateIdle);
+                                    kDeviceStateWifiConfiguring);
                                 GetDisplay()->ShowNotification(
-                                    "Secure QR Wi-Fi setup failed. Hold BOOT to retry.",
-                                    7000);
+                                    "QR setup failed. Click BOOT for fallback; hold BOOT to retry.",
+                                    8000);
                             });
                     },
                 });
@@ -260,10 +264,10 @@ void WifiBoard::StartDppConfigMode() {
         OnDppConfigFinished(false);
         in_config_mode_ = false;
         Application::GetInstance().SetDeviceState(
-            kDeviceStateIdle);
+            kDeviceStateWifiConfiguring);
         GetDisplay()->ShowNotification(
-            "Secure QR Wi-Fi setup could not start.",
-            6000);
+            "QR setup unavailable. Click BOOT for fallback; hold BOOT to retry.",
+            8000);
     }
 }
 
@@ -336,8 +340,20 @@ void WifiBoard::EnterWifiConfigMode() {
     auto& app = Application::GetInstance();
     auto state = app.GetDeviceState();
 
+#if CONFIG_ESP_WIFI_DPP_SUPPORT
+    const bool switching_from_dpp =
+        state == kDeviceStateWifiConfiguring &&
+        !WifiManager::GetInstance().IsConfigMode();
+    if (switching_from_dpp && dpp_commissioner_) {
+        dpp_commissioner_->Cancel();
+    }
+#else
+    const bool switching_from_dpp = false;
+#endif
+
     if (state == kDeviceStateSpeaking || state == kDeviceStateNotifying ||
-        state == kDeviceStateListening || state == kDeviceStateIdle) {
+        state == kDeviceStateListening || state == kDeviceStateIdle ||
+        switching_from_dpp) {
         // Reset protocol (close audio channel, reset protocol)
         Application::GetInstance().ResetProtocol();
 
@@ -360,7 +376,7 @@ void WifiBoard::EnterWifiConfigMode() {
     }
 
     if (state != kDeviceStateStarting) {
-        ESP_LOGE(TAG, "EnterWifiConfigMode called but device state is not starting or speaking, device state: %d", state);
+        ESP_LOGE(TAG, "EnterWifiConfigMode called but device state is not starting or eligible for config transition, device state: %d", state);
         return;
     }
 
