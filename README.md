@@ -51,6 +51,10 @@ Runtime NVS keys take precedence:
 - websocket/url
 - websocket/token
 - websocket/version
+- optional remote_inbox/base_url override when the inbox HTTP origin differs
+  from the WebSocket origin;
+- optional remote_inbox/poll_ms, eco_poll_ms, and critical_poll_ms overrides
+  for idle polling cadence.
 
 Compile-time fallback:
 
@@ -107,14 +111,30 @@ Implemented software includes:
 - user/admin-only complete asset-pack installation over HTTPS;
 - BQ27220 battery-level reading and automatic low/critical battery behavior;
 - authenticated gateway credentials and OTA image-integrity checks;
+- recipient-safe offline personal capsule reader with deterministic local
+  search/browse and no model dependency;
+- token-free Nara Says physical minigame driven by touch and gentle shake;
+- lightweight gateway network diagnostic with ping and bounded
+  download/upload throughput;
+- local companion notifications;
+- authenticated battery-aware remote inbox polling while idle;
+- one-shot remote voice turns that do not enable microphone listening and
+  close after TTS or a 90-second fail-safe;
 - optional SSCMA-compatible external local vision over I2C, where compact
   local detection boxes can drive Nara's gaze without uploading ordinary
   tracking frames to an LLM.
 
-CI validates compilation, host logic, and protocol behavior. It does not
-replace physical calibration of microphone/AEC, speaker acoustics, touch
-orientation, gesture thresholds, battery behavior, TWS/browser behavior, or
-an optional external camera.
+CI validates compilation, host logic, game/capsule logic, protocol behavior,
+and a full Waveshare ESP-IDF target build. It does not replace physical
+calibration of microphone/AEC, speaker acoustics, touch orientation, gesture
+thresholds, battery behavior, real router/hotspot polling current, TWS/browser
+behavior, or an optional external camera.
+
+The remote inbox defaults to a small HTTP check every 15 seconds while online
+and idle, relaxed to 60 seconds in battery saver and 120 seconds at critical
+battery. These are software defaults, not measured battery-life guarantees.
+Realtime voice remains disconnected while idle; a queued ask/say opens it only
+for the required turn.
 
 See the board-local docs:
 
