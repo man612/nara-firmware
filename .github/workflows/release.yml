@@ -7,14 +7,18 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 
 jobs:
   waveshare-1-85b-release:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           submodules: recursive
 
       - name: Resolve release metadata
@@ -24,6 +28,15 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           if [[ -z "$version" ]]; then
             echo "Release version is empty" >&2
+            exit 1
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must use SemVer, for example v1.2.3 or v1.2.3-beta.1" >&2
+            exit 1
+          fi
+          git fetch origin main --no-tags
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "Release tag must point to a commit already merged into main" >&2
             exit 1
           fi
           if [[ "$version" == *-* ]]; then
@@ -38,7 +51,7 @@ jobs:
           echo "NARA_PRERELEASE=$prerelease" >> "$GITHUB_ENV"
 
       - name: Compile Waveshare ESP32-S3-Touch-LCD-1.85B
-        uses: espressif/esp-idf-ci-action@v1
+        uses: espressif/esp-idf-ci-action@9d38657f3d789ca759b2b37aaf5ceffbc42c4f0d # v1
         with:
           esp_idf_version: v6.0.2
           target: esp32s3
@@ -47,6 +60,18 @@ jobs:
             python scripts/build.py
             waveshare/esp32-s3-touch-lcd-1.85b
             --name esp32-s3-touch-lcd-1.85b
+
+      - name: Verify dependency lock did not drift
+        run: git diff --exit-code -- dependencies.lock.esp32s3
+
+      - name: Verify production boot safety flags
+        shell: bash
+        run: |
+          if grep -q '^CONFIG_BOOTLOADER_SKIP_VALIDATE_ALWAYS=y$' sdkconfig; then
+            echo "Unsafe bootloader skip-validation flag is enabled" >&2
+            exit 1
+          fi
+          grep -q '^CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y$' sdkconfig
 
       - name: Package OTA release
         shell: bash
@@ -67,6 +92,11 @@ jobs:
             release/nara-waveshare-1.85b.ota.bin \
             release/nara-waveshare-1.85b.factory.bin \
             > release/SHA256SUMS
+
+      - name: Attest release provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: "release/*"
 
       - name: Publish GitHub release assets
         env:

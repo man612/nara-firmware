@@ -42,6 +42,7 @@ set(NARA_PHYSICAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../main/physical")
 set(NARA_VISION_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../main/vision")
 set(NARA_OFFLINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../main/offline")
 set(NARA_GAMES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../main/games")
+set(NARA_PROTOCOL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../main/protocols")
 
 add_library(nara_face_logic
   "${NARA_FACE_DIR}/nara_face_controller.cc"
@@ -109,3 +110,13 @@ add_executable(nara-says-game-test
 )
 target_include_directories(nara-says-game-test PRIVATE "${NARA_GAMES_DIR}")
 add_test(NAME nara-says-game COMMAND nara-says-game-test)
+
+add_executable(
+  nara-binary-frame-parser-test
+  tests/binary_frame_parser_test.cpp
+)
+target_include_directories(
+  nara-binary-frame-parser-test
+  PRIVATE "${NARA_PROTOCOL_DIR}"
+)
+add_test(NAME nara-binary-frame-parser COMMAND nara-binary-frame-parser-test)

@@ -1,4 +1,5 @@
 #include "websocket_protocol.h"
+#include "binary_frame_parser.h"
 #include "application.h"
 #include "board.h"
 #include "settings.h"
@@ -120,39 +121,43 @@ bool WebsocketProtocol::OpenAudioChannel() {
     websocket_->OnData([this](const char* data, size_t len, bool binary) {
         if (binary) {
             if (on_incoming_audio_ != nullptr) {
+                const auto* bytes = reinterpret_cast<const uint8_t*>(data);
+                NaraBinaryAudioFrameView frame;
                 if (version_ == 2) {
-                    BinaryProtocol2* bp2 = (BinaryProtocol2*)data;
-                    bp2->version = ntohs(bp2->version);
-                    bp2->type = ntohs(bp2->type);
-                    bp2->timestamp = ntohl(bp2->timestamp);
-                    bp2->payload_size = ntohl(bp2->payload_size);
-                    auto payload = (uint8_t*)bp2->payload;
-                    on_incoming_audio_(std::make_unique<AudioStreamPacket>(AudioStreamPacket{
-                        .sample_rate = server_sample_rate_,
-                        .frame_duration = server_frame_duration_,
-                        .timestamp = bp2->timestamp,
-                        .payload = std::vector<uint8_t>(payload, payload + bp2->payload_size)}));
+                    if (!NaraParseBinaryAudioV2(bytes, len, frame)) {
+                        ESP_LOGW(TAG, "Dropping malformed binary protocol v2 frame (%u bytes)",
+                                 static_cast<unsigned>(len));
+                        return;
+                    }
                 } else if (version_ == 3) {
-                    BinaryProtocol3* bp3 = (BinaryProtocol3*)data;
-                    bp3->type = bp3->type;
-                    bp3->payload_size = ntohs(bp3->payload_size);
-                    auto payload = (uint8_t*)bp3->payload;
-                    on_incoming_audio_(std::make_unique<AudioStreamPacket>(AudioStreamPacket{
-                        .sample_rate = server_sample_rate_,
-                        .frame_duration = server_frame_duration_,
-                        .timestamp = 0,
-                        .payload = std::vector<uint8_t>(payload, payload + bp3->payload_size)}));
+                    if (!NaraParseBinaryAudioV3(bytes, len, frame)) {
+                        ESP_LOGW(TAG, "Dropping malformed binary protocol v3 frame (%u bytes)",
+                                 static_cast<unsigned>(len));
+                        return;
+                    }
                 } else {
-                    on_incoming_audio_(std::make_unique<AudioStreamPacket>(AudioStreamPacket{
-                        .sample_rate = server_sample_rate_,
-                        .frame_duration = server_frame_duration_,
-                        .timestamp = 0,
-                        .payload = std::vector<uint8_t>((uint8_t*)data, (uint8_t*)data + len)}));
+                    if (len == 0) {
+                        ESP_LOGW(TAG, "Dropping empty binary audio frame");
+                        return;
+                    }
+                    frame.payload = bytes;
+                    frame.payload_size = len;
                 }
+
+                on_incoming_audio_(std::make_unique<AudioStreamPacket>(AudioStreamPacket{
+                    .sample_rate = server_sample_rate_,
+                    .frame_duration = server_frame_duration_,
+                    .timestamp = frame.timestamp,
+                    .payload = std::vector<uint8_t>(
+                        frame.payload, frame.payload + frame.payload_size)}));
             }
         } else {
             // Parse JSON data
             auto root = cJSON_ParseWithLength(data, len);
+            if (root == nullptr) {
+                ESP_LOGW(TAG, "Dropping malformed WebSocket JSON frame");
+                return;
+            }
             auto type = cJSON_GetObjectItem(root, "type");
             if (cJSON_IsString(type)) {
                 if (strcmp(type->valuestring, "hello") == 0) {

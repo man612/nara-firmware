@@ -14,6 +14,7 @@
 
 #include <driver/gpio.h>
 #include <esp_log.h>
+#include <algorithm>
 #include <arpa/inet.h>
 #include <cJSON.h>
 #include <cstring>
@@ -74,6 +75,10 @@ void Application::Initialize() {
     audio_service_.Start();
     ESP_LOGI(TAG, "After board/audio init");
     SystemInfo::PrintHeapStats();
+
+    // Treat a successful local UI/audio boot as the OTA health checkpoint.
+    // Rollback validity must not depend on cloud/bootstrap availability.
+    Ota::MarkCurrentVersionValid();
 
     AudioServiceCallbacks callbacks;
     callbacks.on_send_queue_available = [this]() {
@@ -531,9 +536,10 @@ void Application::CheckNewVersion() {
         return;
     }
 
-    const int MAX_RETRY = 10;
-    int retry_count = 0;
-    int retry_delay = 10;  // Initial retry delay in seconds
+    constexpr int MAX_ATTEMPTS = 3;
+    constexpr int MAX_RETRY_DELAY_SECONDS = 8;
+    int attempt = 0;
+    int retry_delay = 2;
 
     auto& board = Board::GetInstance();
     while (true) {
@@ -547,9 +553,11 @@ void Application::CheckNewVersion() {
 
         auto check = ota_->CheckVersion();
         if (!check) {
-            retry_count++;
-            if (retry_count >= MAX_RETRY) {
-                ESP_LOGE(TAG, "Too many retries, exit version check");
+            attempt++;
+            if (attempt >= MAX_ATTEMPTS) {
+                ESP_LOGW(TAG,
+                         "Version check unavailable after %d attempts; continue startup",
+                         attempt);
                 return;
             }
 
@@ -572,19 +580,21 @@ void Application::CheckNewVersion() {
             }
             Alert(Lang::Strings::ERROR, buffer, "cloud_off", Lang::Sounds::OGG_EXCLAMATION);
 
-            ESP_LOGW(TAG, "Check new version failed, retry in %d seconds (%d/%d)", retry_delay,
-                     retry_count, MAX_RETRY);
+            ESP_LOGW(TAG,
+                     "Check new version failed, retry in %d seconds (%d/%d)",
+                     retry_delay, attempt, MAX_ATTEMPTS);
             for (int i = 0; i < retry_delay; i++) {
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 if (GetDeviceState() == kDeviceStateIdle) {
                     break;
                 }
             }
-            retry_delay *= 2;  // Double the retry delay
+            retry_delay = std::min(
+                retry_delay * 2, MAX_RETRY_DELAY_SECONDS);
             continue;
         }
-        retry_count = 0;
-        retry_delay = 10;  // Reset retry delay
+        attempt = 0;
+        retry_delay = 2;
 
         if (ota_->HasNewVersion()) {
             if (UpgradeFirmware(ota_->GetFirmwareUrl(), ota_->GetFirmwareVersion(),
@@ -594,8 +604,6 @@ void Application::CheckNewVersion() {
             // If upgrade failed, continue to normal operation
         }
 
-        // No new version, mark the current version as valid
-        ota_->MarkCurrentVersionValid();
         if (!ota_->HasActivationCode() && !ota_->HasActivationChallenge()) {
             // Exit the loop if done checking new version
             break;
