@@ -9,6 +9,7 @@
 #include <freertos/task.h>
 
 #include <cstring>
+#include <memory>
 #include <utility>
 
 namespace {
@@ -177,7 +178,7 @@ void NaraDppCommissioner::HandleWifiEvent(
             auto* ready =
                 static_cast<wifi_event_dpp_uri_ready_t*>(
                     event_data);
-            if (ready != nullptr && ready->uri != nullptr) {
+            if (ready != nullptr && ready->uri[0] != '\0') {
                 const std::string uri(
                     reinterpret_cast<const char*>(ready->uri));
                 ESP_LOGI(TAG, "DPP QR URI ready");
