@@ -1009,13 +1009,25 @@ menu "WiFi Configuration Method"
         help
             Use WiFi Hotspot to transmit WiFi configuration data
     config USE_ESP_BLUFI_WIFI_PROVISIONING
-        bool "ESP-BluFi"
+        bool "ESP-BluFi (legacy compatibility)"
         select BT_ENABLED
         select BT_BLE_42_FEATURES_SUPPORTED
         select BT_BLE_BLUFI_ENABLE
         help
-            Use the PSA Crypto based BluFi security protocol adopted by ESP-IDF 6.
+            Legacy compatibility only. BluFi is in maintenance mode upstream.
             The provisioning client must support ffdhe3072, SHA-256, and AES-CTR.
+
+    config USE_SECURE_BLE_WIFI_PROVISIONING
+        bool "Network Provisioning BLE Security 2"
+        depends on IDF_TARGET_ESP32S3
+        select BT_ENABLED
+        select BT_NIMBLE_ENABLED
+        select ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_2
+        help
+            Use Espressif network_provisioning over BLE with Security 2
+            (SRP6a authentication/key exchange + AES-256-GCM). Nara creates
+            an ephemeral proof-of-possession password for each physical
+            provisioning session and shows it only inside the QR payload.
 endmenu
 
 config AUDIO_DEBUG_UDP_SERVER
