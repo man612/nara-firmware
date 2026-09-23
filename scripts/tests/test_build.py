@@ -863,6 +863,41 @@ class TargetConfigurationTests(unittest.TestCase):
         finally:
             os.chdir(previous_cwd)
 
+    def test_configure_build_includes_production_defaults_before_generated_fragment(self):
+        previous_cwd = Path.cwd()
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                os.chdir(temp_dir)
+                Path("sdkconfig.defaults").write_text(
+                    "CONFIG_PROJECT_DEFAULT=y\n",
+                    encoding="utf-8",
+                )
+                Path("sdkconfig.production-security.defaults").write_text(
+                    "CONFIG_SECURE_BOOT=y\n",
+                    encoding="utf-8",
+                )
+
+                with mock.patch.object(build, "_run_idf") as run_idf:
+                    build._configure_build(
+                        "esp32s3",
+                        ["CONFIG_BOARD_TYPE_TEST=y"],
+                        "test-board",
+                        preview=False,
+                        security_profile="production",
+                    )
+
+                run_idf.assert_called_once_with(
+                    "-DIDF_TARGET=esp32s3",
+                    "-DSDKCONFIG_DEFAULTS="
+                    "sdkconfig.defaults;sdkconfig.production-security.defaults;"
+                    "build/xiaozhi-build.sdkconfig.defaults",
+                    "-DBOARD_NAME=test-board",
+                    "reconfigure",
+                    preview=False,
+                )
+        finally:
+            os.chdir(previous_cwd)
+
     def test_configure_build_replaces_stale_sdkconfig_backup(self):
         previous_cwd = Path.cwd()
         try:
@@ -1537,6 +1572,8 @@ class CliTests(unittest.TestCase):
             language=None,
             wake_word=None,
             build_options=None,
+            security_profile="development",
+            secure_boot_signing_key=None,
             idf_version=(6, 0, 2),
         )
 
@@ -1578,6 +1615,34 @@ class CliTests(unittest.TestCase):
         self.assertEqual(
             build_board.call_args.kwargs["wake_word"],
             "wn9_jarvis_tts",
+        )
+
+    def test_production_security_profile_and_key_are_forwarded(self):
+        with (
+            mock.patch.object(build, "_detect_idf_version", return_value=(6, 0, 2)),
+            mock.patch.object(build, "_board_type_exists", return_value=True),
+            mock.patch.object(
+                build,
+                "_collect_variants",
+                return_value=self.variants,
+            ),
+            mock.patch.object(build, "build_board") as build_board,
+        ):
+            build.main([
+                "bread-compact-wifi",
+                "--security-profile",
+                "production",
+                "--secure-boot-signing-key",
+                "/tmp/nara-signing.pem",
+            ])
+
+        self.assertEqual(
+            build_board.call_args.kwargs["security_profile"],
+            "production",
+        )
+        self.assertEqual(
+            build_board.call_args.kwargs["secure_boot_signing_key"],
+            "/tmp/nara-signing.pem",
         )
 
     def test_build_options_json_is_forwarded(self):
