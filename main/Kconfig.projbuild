@@ -1021,7 +1021,8 @@ menu "WiFi Configuration Method"
         bool "Network Provisioning BLE Security 2"
         depends on IDF_TARGET_ESP32S3
         select BT_ENABLED
-        select BT_NIMBLE_ENABLED
+        select BT_BLUEDROID_ENABLED
+        select BT_BLE_42_FEATURES_SUPPORTED
         select ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_2
         help
             Use Espressif network_provisioning over BLE with Security 2
