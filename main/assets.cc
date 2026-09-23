@@ -1,4 +1,5 @@
 #include "assets.h"
+#include "asset_authenticity.h"
 #include "application.h"
 #include "board.h"
 #include "cjson_utils.h"
@@ -13,7 +14,9 @@
 #include <esp_timer.h>
 #include <cbin_font.h>
 #include <noto_font_bundle.h>
+#include <psa/crypto.h>
 
+#include <array>
 #include <cstring>
 
 #define TAG "Assets"
@@ -486,9 +489,197 @@ bool Assets::EmoteStrategy::Apply(Assets* assets, bool refresh_display_theme) {
     return true;
 }
 
-bool Assets::Download(std::string url,
-                      std::function<void(int progress, size_t speed)> progress_callback) {
-    ESP_LOGI(TAG, "Downloading new version of assets from %s", url.c_str());
+namespace {
+
+bool HashRemoteAssetPack(
+    const std::string& url,
+    std::array<uint8_t, 32>& digest,
+    size_t& content_length) {
+    if (url.rfind("https://", 0) != 0) {
+        ESP_LOGE(TAG, "Remote asset packs require HTTPS");
+        return false;
+    }
+
+    auto network = Board::GetInstance().GetNetwork();
+    auto http = network->CreateHttp(0);
+    if (auto opened = http->Open("GET", url); !opened) {
+        ESP_LOGE(
+            TAG,
+            "Failed to open asset verification connection: %s",
+            opened.error().ToString().c_str());
+        return false;
+    }
+
+    auto status_code = http->GetStatusCode();
+    if (!status_code || *status_code != 200) {
+        ESP_LOGE(
+            TAG,
+            "Asset verification request returned invalid HTTP status");
+        http->Close();
+        return false;
+    }
+
+    content_length = http->GetBodyLength();
+    if (content_length == 0) {
+        ESP_LOGE(TAG, "Asset verification response has no content length");
+        http->Close();
+        return false;
+    }
+
+    constexpr size_t kBufferSize = 4096;
+    using BufferPtr =
+        std::unique_ptr<char, decltype(&heap_caps_free)>;
+    BufferPtr buffer(
+        static_cast<char*>(
+            heap_caps_malloc(
+                kBufferSize,
+                MALLOC_CAP_INTERNAL)),
+        &heap_caps_free);
+    if (!buffer) {
+        ESP_LOGE(
+            TAG,
+            "Failed to allocate asset verification buffer");
+        http->Close();
+        return false;
+    }
+
+    psa_hash_operation_t hash = PSA_HASH_OPERATION_INIT;
+    bool hash_active = false;
+    if (
+        psa_crypto_init() != PSA_SUCCESS ||
+        psa_hash_setup(&hash, PSA_ALG_SHA_256) !=
+            PSA_SUCCESS) {
+        ESP_LOGE(
+            TAG,
+            "Failed to initialize asset SHA-256 verification");
+        http->Close();
+        return false;
+    }
+    hash_active = true;
+
+    size_t total_read = 0;
+    bool success = true;
+    while (true) {
+        auto ret = http->Read(buffer.get(), kBufferSize);
+        if (!ret) {
+            ESP_LOGE(
+                TAG,
+                "Failed to read asset verification data: %s",
+                ret.error().ToString().c_str());
+            success = false;
+            break;
+        }
+
+        const int n = *ret;
+        if (n == 0) {
+            break;
+        }
+
+        if (
+            psa_hash_update(
+                &hash,
+                reinterpret_cast<const uint8_t*>(
+                    buffer.get()),
+                static_cast<size_t>(n)) != PSA_SUCCESS) {
+            ESP_LOGE(
+                TAG,
+                "Failed to update asset SHA-256 verification");
+            success = false;
+            break;
+        }
+        total_read += static_cast<size_t>(n);
+    }
+    http->Close();
+
+    if (success && total_read != content_length) {
+        ESP_LOGE(
+            TAG,
+            "Asset verification size mismatch");
+        success = false;
+    }
+
+    if (success) {
+        size_t digest_length = 0;
+        const auto status = psa_hash_finish(
+            &hash,
+            digest.data(),
+            digest.size(),
+            &digest_length);
+        hash_active = false;
+        if (
+            status != PSA_SUCCESS ||
+            digest_length != digest.size()) {
+            ESP_LOGE(
+                TAG,
+                "Failed to finish asset SHA-256 verification");
+            success = false;
+        }
+    }
+
+    if (hash_active) {
+        psa_hash_abort(&hash);
+    }
+    return success;
+}
+
+}  // namespace
+
+bool Assets::Download(
+    std::string url,
+    const std::string& expected_sha256_hex,
+    const std::string& signature_hex,
+    std::function<void(int progress, size_t speed)> progress_callback) {
+    AssetPackAuthenticity authenticity;
+    std::string authenticity_error;
+    if (
+        !AssetPublisherKeyConfigured() ||
+        !ParseAssetPackAuthenticity(
+            expected_sha256_hex,
+            signature_hex,
+            authenticity,
+            authenticity_error)) {
+        ESP_LOGE(
+            TAG,
+            "Asset authenticity metadata rejected: %s",
+            authenticity_error.empty()
+                ? "publisher key is not configured"
+                : authenticity_error.c_str());
+        return false;
+    }
+
+    std::array<uint8_t, 32> verified_digest{};
+    size_t verified_length = 0;
+    if (
+        !HashRemoteAssetPack(
+            url,
+            verified_digest,
+            verified_length) ||
+        !VerifyAssetPublisherSignature(
+            verified_digest,
+            authenticity,
+            authenticity_error)) {
+        ESP_LOGE(
+            TAG,
+            "Asset pack publisher verification failed: %s",
+            authenticity_error.empty()
+                ? "download/hash failed"
+                : authenticity_error.c_str());
+        return false;
+    }
+
+    if (
+        verified_length < 12 ||
+        partition_ == nullptr ||
+        verified_length > partition_->size) {
+        ESP_LOGE(
+            TAG,
+            "Verified asset pack size is invalid for partition");
+        return false;
+    }
+
+    ESP_LOGI(
+        TAG,
+        "Publisher signature verified; downloading asset pack for installation");
 
     auto network = Board::GetInstance().GetNetwork();
     auto http = network->CreateHttp(0);
@@ -509,6 +700,14 @@ bool Assets::Download(std::string url,
     }
 
     size_t content_length = http->GetBodyLength();
+
+    if (content_length != verified_length) {
+        ESP_LOGE(
+            TAG,
+            "Asset pack changed after signature verification");
+        http->Close();
+        return false;
+    }
 
     if (content_length == 0) {
         ESP_LOGE(TAG, "Failed to get content length");
@@ -540,7 +739,23 @@ bool Assets::Download(std::string url,
         return false;
     }
 
-    // Unapply the partition
+    psa_hash_operation_t install_hash =
+        PSA_HASH_OPERATION_INIT;
+    bool install_hash_active = false;
+    if (
+        psa_crypto_init() != PSA_SUCCESS ||
+        psa_hash_setup(
+            &install_hash,
+            PSA_ALG_SHA_256) != PSA_SUCCESS) {
+        ESP_LOGE(
+            TAG,
+            "Failed to initialize install SHA-256");
+        return false;
+    }
+    install_hash_active = true;
+
+    // Only now, after publisher verification and install-hash setup,
+    // touch the currently active partition.
     UnApplyPartition();
 
     size_t sectors_to_erase = (content_length + SECTOR_SIZE - 1) / SECTOR_SIZE;
@@ -570,6 +785,18 @@ bool Assets::Download(std::string url,
         if (n == 0) {
             // End of data
             success = true;
+            break;
+        }
+
+        if (
+            psa_hash_update(
+                &install_hash,
+                reinterpret_cast<const uint8_t*>(
+                    buffer.get()),
+                static_cast<size_t>(n)) != PSA_SUCCESS) {
+            ESP_LOGE(
+                TAG,
+                "Failed to update install SHA-256");
             break;
         }
 
@@ -652,7 +879,35 @@ bool Assets::Download(std::string url,
         success = false;
     }
 
-    // Write header
+    if (success) {
+        std::array<uint8_t, 32> installed_digest{};
+        size_t digest_length = 0;
+        const auto hash_status =
+            psa_hash_finish(
+                &install_hash,
+                installed_digest.data(),
+                installed_digest.size(),
+                &digest_length);
+        install_hash_active = false;
+
+        if (
+            hash_status != PSA_SUCCESS ||
+            digest_length != installed_digest.size() ||
+            installed_digest !=
+                authenticity.expected_sha256) {
+            ESP_LOGE(
+                TAG,
+                "Asset pack changed during installation; header will not be activated");
+            success = false;
+        }
+    }
+
+    if (install_hash_active) {
+        psa_hash_abort(&install_hash);
+        install_hash_active = false;
+    }
+
+    // Write header only after the second hash matches the signed digest.
     if (success) {
         esp_err_t err = esp_partition_write(partition_, 0, header_buf, HEADER_SIZE);
         if (err != ESP_OK) {
