@@ -11,6 +11,9 @@
 #if CONFIG_ESP_WIFI_DPP_SUPPORT
 #include "provisioning/dpp_commissioner.h"
 #endif
+#if CONFIG_USE_SECURE_BLE_WIFI_PROVISIONING
+#include "provisioning/secure_ble_provisioner.h"
+#endif
 
 class WifiBoard : public Board {
 protected:
@@ -23,6 +26,13 @@ protected:
     virtual void OnDppUriReady(const std::string& uri);
     virtual void OnDppConfigFinished(bool success);
     void StartDppConfigMode();
+#endif
+#if CONFIG_USE_SECURE_BLE_WIFI_PROVISIONING
+    std::unique_ptr<NaraSecureBleProvisioner> secure_ble_provisioner_;
+    virtual void OnSecureProvisioningQrReady(
+        const std::string& payload);
+    virtual void OnSecureProvisioningFinished(bool success);
+    void StartSecureBleConfigMode();
 #endif
 
     virtual std::string GetBoardJson() override;

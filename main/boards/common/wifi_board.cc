@@ -274,6 +274,12 @@ void WifiBoard::StartDppConfigMode() {
 void WifiBoard::EnterDppConfigMode() {
     ESP_LOGI(TAG, "EnterDppConfigMode called");
     auto& app = Application::GetInstance();
+#if CONFIG_USE_SECURE_BLE_WIFI_PROVISIONING
+    if (secure_ble_provisioner_ &&
+        secure_ble_provisioner_->active()) {
+        secure_ble_provisioner_->Cancel();
+    }
+#endif
     const auto state = app.GetDeviceState();
 
     if (
@@ -291,7 +297,7 @@ void WifiBoard::EnterDppConfigMode() {
     xTaskCreate(
         [](void* arg) {
             auto* board = static_cast<WifiBoard*>(arg);
-            vTaskDelay(pdMS_TO_TICKS(250));
+            vTaskDelay(pdMS_TO_TICKS(1250));
             board->StartDppConfigMode();
             vTaskDelete(nullptr);
         },
@@ -308,11 +314,96 @@ bool WifiBoard::IsDppConfigMode() const {
 }
 #endif
 
+#if CONFIG_USE_SECURE_BLE_WIFI_PROVISIONING
+void WifiBoard::OnSecureProvisioningQrReady(
+    const std::string& payload) {
+    (void)payload;
+    Application::GetInstance().GetAudioService().PlaySound(
+        Lang::Sounds::OGG_WIFICONFIG);
+    GetDisplay()->ShowNotification(
+        "Scan the secure BLE setup QR shown by this Nara target.",
+        6000);
+}
+
+void WifiBoard::OnSecureProvisioningFinished(bool success) {
+    (void)success;
+}
+
+void WifiBoard::StartSecureBleConfigMode() {
+    if (secure_ble_provisioner_ &&
+        secure_ble_provisioner_->active()) {
+        return;
+    }
+
+    Application::GetInstance().SetDeviceState(
+        kDeviceStateWifiConfiguring);
+    in_config_mode_ = true;
+    OnNetworkEvent(NetworkEvent::WifiConfigModeEnter);
+
+    if (!secure_ble_provisioner_) {
+        secure_ble_provisioner_ =
+            std::make_unique<NaraSecureBleProvisioner>(
+                NaraSecureBleProvisioner::Callbacks{
+                    .on_qr =
+                        [this](const std::string& payload) {
+                            Application::GetInstance().Schedule(
+                                [this, payload]() {
+                                    OnSecureProvisioningQrReady(
+                                        payload);
+                                });
+                        },
+                    .on_success =
+                        [this]() {
+                            Application::GetInstance().Schedule(
+                                [this]() {
+                                    ESP_LOGI(
+                                        TAG,
+                                        "Secure BLE commissioning completed");
+                                    OnSecureProvisioningFinished(true);
+                                    in_config_mode_ = false;
+                                    OnNetworkEvent(
+                                        NetworkEvent::WifiConfigModeExit);
+                                });
+                        },
+                    .on_error =
+                        [this](const std::string& error) {
+                            Application::GetInstance().Schedule(
+                                [this, error]() {
+                                    ESP_LOGE(
+                                        TAG,
+                                        "Secure BLE commissioning failed: %s",
+                                        error.c_str());
+                                    OnSecureProvisioningFinished(false);
+                                    in_config_mode_ = false;
+                                    Application::GetInstance().SetDeviceState(
+                                        kDeviceStateWifiConfiguring);
+                                    GetDisplay()->ShowNotification(
+                                        "Secure BLE setup stopped. Hold BOOT to retry DPP.",
+                                        8000);
+                                });
+                        },
+                });
+    }
+
+    if (!secure_ble_provisioner_->Start()) {
+        OnSecureProvisioningFinished(false);
+        in_config_mode_ = false;
+        Application::GetInstance().SetDeviceState(
+            kDeviceStateWifiConfiguring);
+        GetDisplay()->ShowNotification(
+            "Secure BLE setup unavailable. Hold BOOT to retry DPP.",
+            8000);
+    }
+}
+#endif
+
 void WifiBoard::StartWifiConfigMode() {
     in_config_mode_ = true;
     // Transition to wifi configuring state
     Application::GetInstance().SetDeviceState(kDeviceStateWifiConfiguring);
-#ifdef CONFIG_USE_HOTSPOT_WIFI_PROVISIONING
+#ifdef CONFIG_USE_SECURE_BLE_WIFI_PROVISIONING
+    StartSecureBleConfigMode();
+#elif CONFIG_USE_HOTSPOT_WIFI_PROVISIONING
     auto& wifi_manager = WifiManager::GetInstance();
 
     wifi_manager.StartConfigAp();
@@ -340,10 +431,18 @@ void WifiBoard::EnterWifiConfigMode() {
     auto& app = Application::GetInstance();
     auto state = app.GetDeviceState();
 
+#if CONFIG_USE_SECURE_BLE_WIFI_PROVISIONING
+    const bool secure_ble_active =
+        secure_ble_provisioner_ &&
+        secure_ble_provisioner_->active();
+#else
+    const bool secure_ble_active = false;
+#endif
 #if CONFIG_ESP_WIFI_DPP_SUPPORT
     const bool switching_from_dpp =
         state == kDeviceStateWifiConfiguring &&
-        !WifiManager::GetInstance().IsConfigMode();
+        !WifiManager::GetInstance().IsConfigMode() &&
+        !secure_ble_active;
     if (switching_from_dpp && dpp_commissioner_) {
         dpp_commissioner_->Cancel();
     }

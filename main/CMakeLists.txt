@@ -58,6 +58,9 @@ set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg"
 if(CONFIG_ESP_WIFI_DPP_SUPPORT)
     list(APPEND SOURCES "provisioning/dpp_commissioner.cc")
 endif()
+if(CONFIG_USE_SECURE_BLE_WIFI_PROVISIONING)
+    list(APPEND SOURCES "provisioning/secure_ble_provisioner.cc")
+endif()
 
 # Add board common files
 list(APPEND SOURCES

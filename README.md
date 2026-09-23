@@ -108,7 +108,9 @@ Implemented software includes:
   temporarily unavailable;
 - ESP-IDF Wi-Fi Easy Connect / DPP QR commissioning on the first target;
 - BOOT long-press for DPP commissioning/retry plus an explicit BOOT-click
-  fallback for phones that do not support DPP;
+  fallback using Espressif Network Provisioning BLE Security 2;
+- the inherited open SoftAP/plain-HTTP portal is disabled on the Waveshare
+  production target; see `docs/SECURE_PROVISIONING.md`;
 - custom Ogg reaction sounds from the separate assets partition;
 - user/admin-only complete asset-pack installation over HTTPS;
 - BQ27220 battery-level reading and automatic low/critical battery behavior;
