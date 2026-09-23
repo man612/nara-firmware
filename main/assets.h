@@ -36,8 +36,11 @@ public:
     }
     ~Assets();
 
-    bool Download(std::string url,
-                  std::function<void(int progress, size_t speed)> progress_callback);
+    bool Download(
+        std::string url,
+        const std::string& expected_sha256_hex,
+        const std::string& signature_hex,
+        std::function<void(int progress, size_t speed)> progress_callback);
     bool Apply(bool refresh_display_theme = true);
     bool GetAssetData(const std::string& name, void*& ptr, size_t& size);
 
