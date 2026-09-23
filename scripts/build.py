@@ -1345,6 +1345,7 @@ def _configure_build(
     sdkconfig_append: list[str],
     board_name: str,
     preview: bool,
+    security_profile: str = "development",
 ) -> None:
     """Configure target, board identity and sdkconfig defaults in one CMake run."""
     sdkconfig = Path("sdkconfig")
@@ -1366,6 +1367,21 @@ def _configure_build(
     defaults = []
     if Path("sdkconfig.defaults").exists():
         defaults.append("sdkconfig.defaults")
+
+    if security_profile == "production":
+        if target != "esp32s3":
+            raise ValueError(
+                "The production security profile is currently validated for ESP32-S3 only"
+            )
+        production_defaults = Path("sdkconfig.production-security.defaults")
+        if not production_defaults.is_file():
+            raise RuntimeError(
+                "sdkconfig.production-security.defaults is missing"
+            )
+        defaults.append(production_defaults.as_posix())
+    elif security_profile != "development":
+        raise ValueError(f"Unknown security profile: {security_profile}")
+
     defaults.append(fragment.as_posix())
     _run_idf(
         f"-DIDF_TARGET={target}",
@@ -1441,6 +1457,8 @@ def build_board(
     language: Optional[str] = None,
     wake_word: Optional[str] = None,
     build_options: Optional[dict[str, object]] = None,
+    security_profile: str = "development",
+    secure_boot_signing_key: Optional[str] = None,
     idf_version: tuple[int, int, int] = (6, 0, 0),
 ) -> None:
     """Compile one specified variant of the specified board type.
@@ -1453,6 +1471,8 @@ def build_board(
         language: optional locale such as en-US
         wake_word: optional ESP-SR model name or "disabled"
         build_options: optional semantic, board-validated option values
+        security_profile: "development" or the ESP32-S3 production profile
+        secure_boot_signing_key: RSA-3072 PEM path required by production builds
     """
     cfg_path = _BOARDS_DIR / Path(board_type) / config_filename
     if not cfg_path.exists():
@@ -1465,6 +1485,30 @@ def build_board(
     with cfg_path.open(encoding='utf-8') as f:
         cfg = json.load(f)
     target = cfg["target"]
+    if security_profile not in {"development", "production"}:
+        raise ValueError(f"Unknown security profile: {security_profile}")
+    if security_profile == "production" and target != "esp32s3":
+        raise ValueError(
+            "The production security profile is currently validated for ESP32-S3 only"
+        )
+
+    production_signing_key: Optional[str] = None
+    if security_profile == "production":
+        if not secure_boot_signing_key:
+            raise ValueError(
+                "--secure-boot-signing-key is required for the production security profile"
+            )
+        signing_key = Path(secure_boot_signing_key).expanduser().resolve()
+        if not signing_key.is_file():
+            raise ValueError(
+                f"Secure Boot signing key does not exist: {signing_key}"
+            )
+        production_signing_key = signing_key.as_posix()
+    elif secure_boot_signing_key:
+        raise ValueError(
+            "--secure-boot-signing-key is only valid with --security-profile production"
+        )
+
     reported_type = _get_reported_type(cfg)
     preview = cfg.get("preview", False)
     if not isinstance(preview, bool):
@@ -1521,6 +1565,12 @@ def build_board(
         )
 
         user_options: list[str] = []
+        if production_signing_key:
+            user_options.extend([
+                "CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=y",
+                f'CONFIG_SECURE_BOOT_SIGNING_KEY="{production_signing_key}"',
+            ])
+
         validation_symbols: list[tuple[list[str], str]] = [
             ([board_type_config], "board selection"),
         ]
@@ -1591,6 +1641,7 @@ def build_board(
             sdkconfig_append,
             name,
             preview,
+            security_profile=security_profile,
         )
         for symbols, option_name in validation_symbols:
             _validate_configured_symbols(symbols, option_name)
@@ -1703,6 +1754,23 @@ def main(argv: Optional[list[str]] = None) -> None:
         ),
     )
     parser.add_argument(
+        "--security-profile",
+        choices=("development", "production"),
+        default="development",
+        help=(
+            "Security profile. Production enables irreversible-device security "
+            "build settings but does not burn eFuses during a host build."
+        ),
+    )
+    parser.add_argument(
+        "--secure-boot-signing-key",
+        metavar="PEM",
+        help=(
+            "RSA-3072 Secure Boot v2 signing key. Required for "
+            "--security-profile production; never commit this key."
+        ),
+    )
+    parser.add_argument(
         "--zip",
         action="store_true",
         help="Also recreate releases/v<version>_<name>.zip",
@@ -1729,6 +1797,8 @@ def main(argv: Optional[list[str]] = None) -> None:
             or args.language
             or args.wake_word
             or args.build_options_json
+            or args.security_profile != "development"
+            or args.secure_boot_signing_key
             or args.zip
             or args.json
         ):
@@ -1748,6 +1818,8 @@ def main(argv: Optional[list[str]] = None) -> None:
             or args.language
             or args.wake_word
             or args.build_options_json
+            or args.security_profile != "development"
+            or args.secure_boot_signing_key
             or args.zip
         ):
             parser.error(
@@ -1769,6 +1841,8 @@ def main(argv: Optional[list[str]] = None) -> None:
             or args.language
             or args.wake_word
             or args.build_options_json
+            or args.security_profile != "development"
+            or args.secure_boot_signing_key
             or args.zip
         ):
             parser.error(
@@ -1823,6 +1897,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         parser.error("--name cannot be combined with board 'all'")
     if board_type_input == "all" and args.build_options_json:
         parser.error("--build-options-json cannot be combined with board 'all'")
+    if board_type_input == "all" and args.security_profile != "development":
+        parser.error("--security-profile production requires one explicit board variant")
 
     parsed_build_options: Optional[dict[str, object]] = None
     if args.build_options_json is not None:
@@ -1876,6 +1952,8 @@ def main(argv: Optional[list[str]] = None) -> None:
             language=args.language,
             wake_word=args.wake_word,
             build_options=parsed_build_options,
+            security_profile=args.security_profile,
+            secure_boot_signing_key=args.secure_boot_signing_key,
             idf_version=idf_version,
         )
 

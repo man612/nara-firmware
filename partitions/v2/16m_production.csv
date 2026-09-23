@@ -1,0 +1,10 @@
+# Nara ESP32-S3 production partition table
+# Secure Boot/Flash Encryption profile uses partition table offset 0x10000.
+# Name,     Type, SubType, Offset,  Size, Flags
+nvs,        data, nvs,      0x11000, 0x4000,
+nvs_keys,   data, nvs_keys, 0x15000, 0x1000, encrypted
+otadata,    data, ota,      0x16000, 0x2000, encrypted
+phy_init,   data, phy,      0x18000, 0x1000,
+ota_0,      app,  ota_0,    0x20000, 0x3f0000,
+ota_1,      app,  ota_1,    ,         0x3f0000,
+assets,     data, spiffs,   0x800000, 8M, encrypted

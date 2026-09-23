@@ -13,3 +13,13 @@ Only the current main branch is treated as the maintained development line
 unless a release explicitly states otherwise.
 
 This repository does not currently operate a public bug-bounty program.
+
+
+## Production device security
+
+Development builds intentionally remain recoverable. Production Secure Boot,
+Flash Encryption, NVS encryption, signing-key handling and irreversible eFuse
+operations are documented separately in
+[`docs/PRODUCTION_SECURITY.md`](docs/PRODUCTION_SECURITY.md).
+
+Never use a CI-generated test signing key for a real device.

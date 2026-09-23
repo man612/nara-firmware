@@ -2,6 +2,8 @@ name: firmware-ci
 
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 concurrency:
@@ -101,3 +103,36 @@ jobs:
             build/flasher_args.json
             sdkconfig
             dependencies.lock.esp32s3
+
+
+  waveshare-production-security-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+
+      - name: Compile signed production-security profile with ephemeral CI key
+        uses: espressif/esp-idf-ci-action@9d38657f3d789ca759b2b37aaf5ceffbc42c4f0d # v1
+        with:
+          esp_idf_version: v6.0.2
+          target: esp32s3
+          path: .
+          command: >-
+            set -euo pipefail;
+            openssl genpkey -algorithm RSA
+            -pkeyopt rsa_keygen_bits:3072
+            -out .ci-secure-boot-signing-key.pem >/dev/null 2>&1;
+            export IDF_CI_BUILD=1;
+            python scripts/build.py
+            waveshare/esp32-s3-touch-lcd-1.85b
+            --name esp32-s3-touch-lcd-1.85b
+            --security-profile production
+            --secure-boot-signing-key .ci-secure-boot-signing-key.pem;
+            python scripts/verify_production_security_config.py sdkconfig;
+            espsecure.py signature-info-v2 build/nara_firmware.bin;
+            rm -f .ci-secure-boot-signing-key.pem
+
+      - name: Ensure CI signing key was not persisted
+        run: test ! -e .ci-secure-boot-signing-key.pem

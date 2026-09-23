@@ -1,0 +1,30 @@
+# Nara ESP32-S3 production/manufacturing security profile.
+#
+# WARNING: these settings cause irreversible eFuse changes when flashed and
+# booted on real hardware. Normal development builds do not load this file.
+
+CONFIG_SECURE_BOOT=y
+CONFIG_SECURE_BOOT_V2_ENABLED=y
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=y
+CONFIG_SECURE_BOOT_INSECURE=n
+CONFIG_SECURE_BOOT_ENABLE_AGGRESSIVE_KEY_REVOKE=n
+CONFIG_SECURE_BOOT_ALLOW_JTAG=n
+
+CONFIG_SECURE_FLASH_ENC_ENABLED=y
+CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y
+CONFIG_SECURE_FLASH_ENCRYPTION_AES128=y
+CONFIG_SECURE_FLASH_ENCRYPTION_MODE_DEVELOPMENT=n
+CONFIG_SECURE_INSECURE_ALLOW_DL_MODE=n
+
+# Keep only the restricted Secure Download Mode for controlled factory recovery.
+CONFIG_SECURE_ENABLE_SECURE_ROM_DL_MODE=y
+
+# Explicit even though ESP-IDF also enables NVS encryption with flash encryption.
+CONFIG_NVS_ENCRYPTION=y
+CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=y
+CONFIG_NVS_SEC_KEY_PROTECT_USING_HMAC=n
+
+# Secure Boot/Flash Encryption enlarge the bootloader; production uses a
+# separate layout so NVS never overlaps the enlarged bootloader/partition table.
+CONFIG_PARTITION_TABLE_OFFSET=0x10000
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions/v2/16m_production.csv"
