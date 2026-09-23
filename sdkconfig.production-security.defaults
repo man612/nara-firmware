@@ -21,6 +21,8 @@ CONFIG_SECURE_ENABLE_SECURE_ROM_DL_MODE=y
 
 # Explicit even though ESP-IDF also enables NVS encryption with flash encryption.
 CONFIG_NVS_ENCRYPTION=y
+CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=y
+CONFIG_NVS_SEC_KEY_PROTECT_USING_HMAC=n
 
 # Secure Boot/Flash Encryption enlarge the bootloader; production uses a
 # separate layout so NVS never overlaps the enlarged bootloader/partition table.
