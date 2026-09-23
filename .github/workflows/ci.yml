@@ -120,7 +120,6 @@ jobs:
           target: esp32s3
           path: .
           command: >-
-            bash -lc '
             set -euo pipefail;
             openssl genpkey -algorithm RSA
             -pkeyopt rsa_keygen_bits:3072
@@ -134,7 +133,6 @@ jobs:
             python scripts/verify_production_security_config.py sdkconfig;
             espsecure.py signature-info-v2 build/nara_firmware.bin;
             rm -f .ci-secure-boot-signing-key.pem
-            '
 
       - name: Ensure CI signing key was not persisted
         run: test ! -e .ci-secure-boot-signing-key.pem
