@@ -171,12 +171,10 @@ bool NaraSecureBleProvisioner::Start() {
     }
 
     network_prov_security2_params_t security = {
-        .salt =
-            reinterpret_cast<const uint8_t*>(salt_),
+        .salt = salt_,
         .salt_len =
             static_cast<uint16_t>(salt_len_),
-        .verifier =
-            reinterpret_cast<const uint8_t*>(verifier_),
+        .verifier = verifier_,
         .verifier_len =
             static_cast<uint16_t>(verifier_len_),
     };
