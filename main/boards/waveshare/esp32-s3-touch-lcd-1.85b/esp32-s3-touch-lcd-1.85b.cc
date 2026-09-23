@@ -2001,6 +2001,33 @@ private:
                                       DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
     }
 
+#if CONFIG_USE_SECURE_BLE_WIFI_PROVISIONING
+    void OnSecureProvisioningQrReady(
+        const std::string& payload) override {
+        GetBacklight()->RestoreBrightness();
+        GetDisplay()->SetPowerSaveMode(false);
+        if (!display_->ShowQrCode(
+                payload,
+                "Secure BLE setup - hold BOOT for DPP")) {
+            GetDisplay()->ShowNotification(
+                "Secure BLE QR generation failed. Hold BOOT for DPP.",
+                7000);
+        }
+    }
+
+    void OnSecureProvisioningFinished(bool success) override {
+        display_->HideQrCode();
+        if (success) {
+            GetDisplay()->SetEmotion("happy");
+            GetDisplay()->ShowNotification(
+                "Wi-Fi saved securely.",
+                3500);
+        } else {
+            GetDisplay()->SetEmotion("sad");
+        }
+    }
+#endif
+
 #if CONFIG_ESP_WIFI_DPP_SUPPORT
     void OnDppUriReady(const std::string& uri) override {
         GetBacklight()->RestoreBrightness();
@@ -2035,10 +2062,21 @@ private:
                 EnterWifiConfigMode();
                 return;
             }
+#if CONFIG_USE_SECURE_BLE_WIFI_PROVISIONING
+            if (
+                state == kDeviceStateWifiConfiguring &&
+                secure_ble_provisioner_ &&
+                secure_ble_provisioner_->active()) {
+                GetDisplay()->ShowNotification(
+                    "Secure BLE setup is active. Hold BOOT to retry DPP.",
+                    4500);
+                return;
+            }
+#endif
 #if CONFIG_ESP_WIFI_DPP_SUPPORT
             // DPP is preferred but not universally supported by phones.
             // A deliberate click while the DPP/failure screen is visible
-            // switches to the inherited fallback provisioning path; a long
+            // switches to the secure BLE Security 2 fallback; a long
             // press remains the explicit DPP retry path below.
             if (
                 state == kDeviceStateWifiConfiguring &&
