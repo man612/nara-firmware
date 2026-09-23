@@ -21,7 +21,7 @@ The profile enables:
 - Secure Boot v2;
 - signed binaries;
 - Flash Encryption in Release mode;
-- NVS encryption;
+- NVS encryption using the Flash Encryption-backed key-protection scheme;
 - encrypted NVS key storage partition;
 - encrypted OTA metadata/assets partitions where appropriate;
 - Secure Download Mode instead of unrestricted ROM download mode;
@@ -120,3 +120,13 @@ hardware/manufacturing acceptance gate.
 - ESP-IDF v6.0.2 Flash Encryption documentation
 - ESP-IDF NVS Encryption documentation
 - ESP-IDF Security Features Enablement Workflows
+
+
+### ESP-IDF 6 NVS provider note
+
+ESP32-S3 has an HMAC peripheral. ESP-IDF 6 therefore selects the HMAC-based
+NVS security provider by default when NVS encryption is enabled, even if Flash
+Encryption is also active. Nara deliberately overrides that default with
+`CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=y` because the production layout
+already carries an encrypted `nvs_keys` partition and the manufacturing model
+does not need a separate HMAC eFuse key just for NVS.
