@@ -50,10 +50,11 @@ set(SOURCES "audio/audio_codec.cc"
             "settings.cc"
             "device_state_machine.cc"
             "assets.cc"
+            "security/asset_authenticity.cc"
             "main.cc"
             )
 
-set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols" "physical" "offline" "games" "diagnostics" "remote" "provisioning")
+set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg" "audio" "audio/demuxer" "protocols" "physical" "offline" "games" "diagnostics" "remote" "provisioning" "security")
 
 if(CONFIG_ESP_WIFI_DPP_SUPPORT)
     list(APPEND SOURCES "provisioning/dpp_commissioner.cc")
