@@ -8,7 +8,7 @@
 #include <cstring>
 #include <utility>
 
-#include <crypto/srp6a/esp_srp.h>
+#include <esp_srp.h>
 #include <esp_log.h>
 #include <esp_mac.h>
 #include <esp_random.h>
