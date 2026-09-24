@@ -112,7 +112,8 @@ Implemented software includes:
 - the inherited open SoftAP/plain-HTTP portal is disabled on the Waveshare
   production target; see `docs/SECURE_PROVISIONING.md`;
 - custom Ogg reaction sounds from the separate assets partition;
-- user/admin-only complete asset-pack installation over HTTPS;
+- user/admin-only complete asset-pack installation over HTTPS with pinned
+  ECDSA P-256 publisher signatures and SHA-256 re-verification;
 - BQ27220 battery-level reading and automatic low/critical battery behavior;
 - authenticated gateway credentials and OTA image-integrity checks;
 - recipient-safe offline personal capsule reader with deterministic local
@@ -144,6 +145,8 @@ See the board-local docs:
 
 - main/boards/waveshare/esp32-s3-touch-lcd-1.85b/REACTION_ASSETS.md
 - main/boards/waveshare/esp32-s3-touch-lcd-1.85b/VISION.md
+- docs/SECURE_PROVISIONING.md
+- docs/ASSET_SIGNING.md
 
 ## Development without hardware
 

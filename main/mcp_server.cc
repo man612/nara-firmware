@@ -13,6 +13,7 @@
 #include <optional>
 
 #include "application.h"
+#include "asset_authenticity.h"
 #include "board.h"
 #include "display.h"
 #include "lvgl_image.h"
@@ -142,34 +143,75 @@ void McpServer::AddUserOnlyTools() {
                     });
 
     // Asset/reaction pack installation is intentionally user-only. The AI
-    // never receives a generic remote-file installation tool.
-    AddUserOnlyTool(
-        "self.assets.install_pack",
-        "Install a complete signed/trusted Nara asset pack from an HTTPS URL on next boot. "
-        "Use this from an authenticated admin surface, not from the conversational AI.",
-        PropertyList({Property("url", kPropertyTypeString).SetMaxLength(512)}),
-        [this](const PropertyList& properties) -> ToolResult {
-            const auto url = properties["url"].value<std::string>();
-            if (url.rfind("https://", 0) != 0) {
-                return std::unexpected("asset pack URL must use HTTPS");
-            }
-            if (url.find_first_of("\r\n") != std::string::npos) {
-                return std::unexpected("asset pack URL contains invalid characters");
-            }
+    // never receives a generic remote-file installation tool. If no publisher
+    // key is pinned at build time, remote pack installation is not exposed.
+    if (AssetPublisherKeyConfigured()) {
+        AddUserOnlyTool(
+            "self.assets.install_pack",
+            "Install a publisher-signed Nara asset pack from HTTPS on next boot. "
+            "Requires the expected SHA-256 and a raw ECDSA P-256/SHA-256 r||s signature. "
+            "Use this from an authenticated admin surface, not from conversational AI.",
+            PropertyList({
+                Property("url", kPropertyTypeString).SetMaxLength(512),
+                Property("sha256", kPropertyTypeString).SetMaxLength(64),
+                Property("signature", kPropertyTypeString).SetMaxLength(128),
+            }),
+            [this](const PropertyList& properties) -> ToolResult {
+                const auto url =
+                    properties["url"].value<std::string>();
+                const auto sha256 =
+                    properties["sha256"].value<std::string>();
+                const auto signature =
+                    properties["signature"].value<std::string>();
 
-            {
-                Settings settings("assets", true);
-                settings.SetString("download_url", url);
-            }
+                if (url.rfind("https://", 0) != 0) {
+                    return std::unexpected(
+                        "asset pack URL must use HTTPS");
+                }
+                if (
+                    url.find_first_of("\r\n") !=
+                    std::string::npos) {
+                    return std::unexpected(
+                        "asset pack URL contains invalid characters");
+                }
 
-            auto& app = Application::GetInstance();
-            app.Schedule([&app]() {
-                ESP_LOGI(TAG, "Rebooting to install queued asset pack");
-                vTaskDelay(pdMS_TO_TICKS(500));
-                app.Reboot();
+                AssetPackAuthenticity authenticity;
+                std::string error;
+                if (
+                    !ParseAssetPackAuthenticity(
+                        sha256,
+                        signature,
+                        authenticity,
+                        error)) {
+                    return std::unexpected(error);
+                }
+
+                {
+                    Settings settings("assets", true);
+                    settings.SetString("download_url", url);
+                    settings.SetString(
+                        "download_sha256",
+                        sha256);
+                    settings.SetString(
+                        "download_signature",
+                        signature);
+                }
+
+                auto& app = Application::GetInstance();
+                app.Schedule([&app]() {
+                    ESP_LOGI(
+                        TAG,
+                        "Rebooting to install queued signed asset pack");
+                    vTaskDelay(pdMS_TO_TICKS(500));
+                    app.Reboot();
+                });
+                return true;
             });
-            return true;
-        });
+    } else {
+        ESP_LOGW(
+            TAG,
+            "Remote asset installation disabled: no publisher key pinned");
+    }
 
     // Firmware upgrade
     AddUserOnlyTool(
@@ -344,16 +386,8 @@ void McpServer::AddUserOnlyTools() {
     }
 #endif  // HAVE_LVGL
 
-    // Assets download url (always registered — Settings storage works regardless of partition
-    // layout)
-    AddUserOnlyTool("self.assets.set_download_url", "Set the download url for the assets",
-                    PropertyList({Property("url", kPropertyTypeString)}),
-                    [](const PropertyList& properties) -> ReturnValue {
-                        auto url = properties["url"].value<std::string>();
-                        Settings settings("assets", true);
-                        settings.SetString("download_url", url);
-                        return true;
-                    });
+    // No generic URL-only asset installer is registered. Remote asset
+    // replacement must always carry publisher authenticity metadata.
 }
 
 void McpServer::AddTool(std::unique_ptr<McpTool> tool) {

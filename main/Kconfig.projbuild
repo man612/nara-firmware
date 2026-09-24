@@ -48,6 +48,15 @@ config CUSTOM_ASSETS_FILE
         The custom assets file to flash.
         It can be a local file relative to the project directory or a remote url.
 
+config NARA_ASSET_PUBLISHER_PUBLIC_KEY_HEX
+    string "Pinned Nara asset publisher P-256 public key"
+    default ""
+    help
+        Uncompressed SEC1 P-256 public key encoded as exactly 130 hexadecimal
+        characters (04 || X || Y). When empty or invalid, remote asset-pack
+        installation is disabled. Keep the corresponding private signing key
+        offline and outside this repository.
+
 choice
     prompt "Default Language"
     default LANGUAGE_EN_US

@@ -487,11 +487,32 @@ void Application::CheckAssetsVersion() {
     }
 
     Settings settings("assets", true);
-    // Check if there is a new assets need to be downloaded
-    std::string download_url = settings.GetString("download_url");
+    // Remote asset replacement is queued as one signed transaction.
+    std::string download_url =
+        settings.GetString("download_url");
+    std::string download_sha256 =
+        settings.GetString("download_sha256");
+    std::string download_signature =
+        settings.GetString("download_signature");
 
     if (!download_url.empty()) {
         settings.EraseKey("download_url");
+        settings.EraseKey("download_sha256");
+        settings.EraseKey("download_signature");
+
+        if (
+            download_sha256.empty() ||
+            download_signature.empty()) {
+            ESP_LOGE(
+                TAG,
+                "Rejected queued asset pack without authenticity metadata");
+            Alert(
+                Lang::Strings::ERROR,
+                Lang::Strings::DOWNLOAD_ASSETS_FAILED,
+                "cancel",
+                Lang::Sounds::OGG_EXCLAMATION);
+            return;
+        }
 
         char message[256];
         snprintf(message, sizeof(message), Lang::Strings::FOUND_NEW_ASSETS, download_url.c_str());
@@ -504,7 +525,11 @@ void Application::CheckAssetsVersion() {
         display->SetChatMessage("system", Lang::Strings::PLEASE_WAIT);
 
         bool success =
-            assets.Download(download_url, [this, display](int progress, size_t speed) -> void {
+            assets.Download(
+                download_url,
+                download_sha256,
+                download_signature,
+                [this, display](int progress, size_t speed) -> void {
                 char buffer[32];
                 snprintf(buffer, sizeof(buffer), "%d%% %uKB/s", progress, speed / 1024);
                 Schedule([display, message = std::string(buffer)]() {
