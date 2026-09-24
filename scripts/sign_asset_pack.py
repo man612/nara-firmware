@@ -46,6 +46,17 @@ def parse_ecdsa_der(signature: bytes) -> bytes:
     return b"".join(parts)
 
 
+def read_der_tlv(data: bytes, offset: int) -> tuple[int, bytes, int]:
+    if offset >= len(data):
+        raise ValueError("truncated DER")
+    tag = data[offset]
+    length, value_offset = read_der_length(data, offset + 1)
+    end = value_offset + length
+    if end > len(data):
+        raise ValueError("truncated DER value")
+    return tag, data[value_offset:end], end
+
+
 def public_key_hex(private_key: Path) -> str:
     der = subprocess.check_output([
         "openssl", "pkey",
@@ -53,12 +64,25 @@ def public_key_hex(private_key: Path) -> str:
         "-pubout",
         "-outform", "DER",
     ])
-    marker = der.rfind(b"\x04")
-    if marker < 0 or len(der) - marker != 65:
-        raise RuntimeError(
-            "could not extract uncompressed P-256 public key"
-        )
-    return der[marker:].hex()
+
+    tag, outer, end = read_der_tlv(der, 0)
+    if tag != 0x30 or end != len(der):
+        raise RuntimeError("public key is not valid SubjectPublicKeyInfo DER")
+
+    algorithm_tag, _algorithm, offset = read_der_tlv(outer, 0)
+    if algorithm_tag != 0x30:
+        raise RuntimeError("public key algorithm identifier is invalid")
+
+    bit_string_tag, bit_string, final = read_der_tlv(outer, offset)
+    if bit_string_tag != 0x03 or final != len(outer):
+        raise RuntimeError("public key BIT STRING is invalid")
+    if len(bit_string) != 66 or bit_string[0] != 0:
+        raise RuntimeError("unexpected P-256 public key BIT STRING size")
+
+    point = bit_string[1:]
+    if len(point) != 65 or point[0] != 0x04:
+        raise RuntimeError("public key is not uncompressed P-256")
+    return point.hex()
 
 
 def sign(private_key: Path, asset: Path) -> dict[str, str]:
