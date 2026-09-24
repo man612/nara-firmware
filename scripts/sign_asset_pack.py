@@ -26,6 +26,8 @@ def parse_ecdsa_der(signature: bytes) -> bytes:
     offset += 1
     seq_len, offset = read_der_length(signature, offset)
     end = offset + seq_len
+    if end != len(signature):
+        raise ValueError("ECDSA signature has trailing DER data")
     parts = []
     for _ in range(2):
         if offset >= end or signature[offset] != 0x02:
